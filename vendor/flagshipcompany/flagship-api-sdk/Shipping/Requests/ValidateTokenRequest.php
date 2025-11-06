@@ -5,6 +5,7 @@ use Flagship\Apis\Requests\ApiRequest;
 use Flagship\Apis\Exceptions\ApiException;
 use Flagship\Shipping\Exceptions\ValidateTokenException;
 
+#[\AllowDynamicProperties]
 class ValidateTokenRequest extends ApiRequest{
     public function __construct(string $baseUrl,string $token, string $flagshipFor, string $version){
         $this->url = $baseUrl.'/check-token';

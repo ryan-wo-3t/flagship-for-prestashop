@@ -1,0 +1,13 @@
+/vendor/*
+!/vendor/autoload.php
+!/vendor/bin/
+!/vendor/bin/**
+!/vendor/composer/
+!/vendor/composer/**
+!/vendor/flagshipcompany/
+!/vendor/flagshipcompany/**
+!/vendor/symfony/
+!/vendor/symfony/**
+!/vendor/tightenco/
+!/vendor/tightenco/**
+/.phpunit.result.cache

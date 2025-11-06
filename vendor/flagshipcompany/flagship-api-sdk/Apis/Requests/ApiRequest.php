@@ -4,6 +4,7 @@ namespace Flagship\Apis\Requests;
 use Flagship\Apis\Exceptions\ApiException;
 use Flagship\Shipping\Exceptions\FilterException;
 
+#[\AllowDynamicProperties]
 abstract class ApiRequest{
 
     public function setStoreName(string $storeName){

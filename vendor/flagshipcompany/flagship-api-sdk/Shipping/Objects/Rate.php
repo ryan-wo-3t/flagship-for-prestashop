@@ -2,6 +2,7 @@
 
 namespace Flagship\Shipping\Objects;
 
+#[\AllowDynamicProperties]
 class Rate
 {
     public function __construct( \stdClass $rate )

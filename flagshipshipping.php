@@ -41,6 +41,7 @@ define('SMARTSHIP_API_URL', 'https://api.smartship.io');
 define('SMARTSHIP_TEST_API_URL', 'https://test-api.smartship.io');
 define('SMARTSHIP_TEST_WEB_URL','https://test-smartshipng.flagshipcompany.com');
 
+#[\AllowDynamicProperties]
 class FlagshipShipping extends CarrierModule
 {
     public $id_carrier;
@@ -313,7 +314,7 @@ class FlagshipShipping extends CarrierModule
         foreach ($ratesArray as $value) {
             $str .= implode("-", $value).",";
         }
-        $str = rtrim($str);
+        $str = rtrim($str, ',');
 
         return $str;
     }
@@ -1192,7 +1193,7 @@ class FlagshipShipping extends CarrierModule
         
     }
 
-    protected function getPackedItems(\Flagship\Shipping\Collections\PackingCollection $packings) : array
+    protected function getPackedItems(?\Flagship\Shipping\Collections\PackingCollection $packings = null) : array
     {
         if ($packings == null) {
             return [
@@ -1204,6 +1205,7 @@ class FlagshipShipping extends CarrierModule
             ];
         }
 
+        $packedItems = [];
         foreach ($packings as $packing) {
             $packedItems[] = [
                 'length' => $packing->getLength(),
@@ -1236,8 +1238,7 @@ class FlagshipShipping extends CarrierModule
     protected function getDimension($dimension)
     {
         if(Configuration::get('PS_DIMENSION_UNIT') === 'cm') {
-            $cmInches = 0.393701;
-            $dimension  = $dimension * $cmInches;
+            $dimension  = $dimension / 2.54;
         }
         if(!Configuration::get('flagship_packing_api') || 0 == $dimension ) {
             $dimension = max(ceil($dimension),1);

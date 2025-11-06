@@ -37,6 +37,7 @@ use Flagship\Shipping\Exceptions\AssociateToDepotException;
 use Flagship\Shipping\Exceptions\ConfirmManifestByIdException;
 use Flagship\Shipping\Exceptions\GetManifestByIdException;
 
+#[\AllowDynamicProperties]
 class Flagship{
 
     public function __construct(string $apiToken, string $apiUrl, string $flagshipFor='', string $version=''){

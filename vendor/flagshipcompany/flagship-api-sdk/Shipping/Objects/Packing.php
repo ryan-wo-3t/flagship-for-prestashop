@@ -2,6 +2,7 @@
 
 namespace Flagship\Shipping\Objects;
 
+#[\AllowDynamicProperties]
 class Packing{
     public function __construct(\stdClass $packing){
         $this->packing = $packing;
