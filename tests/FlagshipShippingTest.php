@@ -478,86 +478,84 @@ final class FlagshipShippingTest extends TestCase
         $this->assertSame(2.0, $this->module->lastPackingPayload['items'][1]['width']);
     }
 
-    /*
-     * Debug helper: Uncomment this test to print live SmartShip rates (requires a real API token).
+    /**
+     * Debug helper: prints live SmartShip rates (requires FLAGSHIP_TEST_API_TOKEN env var).
      *
      * Steps:
      *   1. Export FLAGSHIP_TEST_API_TOKEN with your SmartShip sandbox token.
      *   2. (Optional) Export FLAGSHIP_BASE_ENV=test to hit the sandbox; omit for production.
-     *   3. Uncomment the test below and run PHPUnit; rates will be printed to STDERR.
+     *   3. Run `vendor\bin\phpunit --filter testDebugPrintSmartShipRates`.
      *
-     * NOTE: This test makes a real HTTP call and includes customer data in the payload.
-     *       Only use it locally while debugging and re-comment it before committing.
-     *
-     * public function testDebugPrintSmartShipRates(): void
-     * {
-     *     $token = getenv('FLAGSHIP_TEST_API_TOKEN');
-     *     if (!$token) {
-     *         $this->markTestSkipped('Set FLAGSHIP_TEST_API_TOKEN to run this debug helper.');
-     *     }
-     *
-     *     $useSandbox = getenv('FLAGSHIP_BASE_ENV') === 'test';
-     *     Configuration::updateValue('flagship_api_token', $token);
-     *     Configuration::updateValue('flagship_test_env', $useSandbox ? 1 : 0);
-     *
-     *     $address = new Address();
-     *     $address->company = '';
-     *     $address->id_country = 2; // Ship to US
-     *     $address->id_state = 2;   // NY
-     *     $address->city = 'New York';
-     *     $address->postcode = '10001';
-     *
-     *     Context::getContext()->cart->products = [
-     *         [
-     *             'quantity' => 1,
-     *             'width' => 4,
-     *             'height' => 5,
-     *             'depth' => 6,
-     *             'weight' => 2,
-     *             'name' => 'Widget A',
-     *             'is_virtual' => false,
-     *         ],
-     *         [
-     *             'quantity' => 1,
-     *             'width' => 2,
-     *             'height' => 3,
-     *             'depth' => 4,
-     *             'weight' => 1.5,
-     *             'name' => 'Widget B',
-     *             'is_virtual' => false,
-     *         ],
-     *     ];
-     *
-     *     $payload = $this->module->publicBuildCheckoutPayload($address);
-     *     fwrite(STDERR, "SmartShip payload:\n".json_encode($payload, JSON_PRETTY_PRINT)."\n");
-     *
-     *     $request = new FlagshipDetailedQuoteRequest(
-     *         $token,
-     *         $this->module->getApiBaseUrl(),
-     *         $payload,
-     *         'Prestashop',
-     *         _PS_VERSION_
-     *     );
-     *
-     *     $request->setStoreName('Flagship Test Debug');
-     *     $rates = $request->executeWithDetails()->sortByPrice();
-     *
-     *     fwrite(STDERR, "Returned services:\n");
-     *     foreach ($rates as $rate) {
-     *         fwrite(
-     *             STDERR,
-     *             sprintf(
-     *                 " - %s %s => %.2f\n",
-     *                 $rate->getCourierName(),
-     *                 $rate->getCourierDescription(),
-     *                 $rate->getTotal()
-     *             )
-     *         );
-     *     }
-     *
-     *     $this->assertNotEmpty($rates);
-     * }
+     * NOTE: This test performs a real HTTP call and logs address/package data. Only enable when debugging.
      */
+    public function testDebugPrintSmartShipRates(): void
+    {
+        $token = getenv('FLAGSHIP_TEST_API_TOKEN');
+        if (!$token) {
+            $this->markTestSkipped('Set FLAGSHIP_TEST_API_TOKEN to run this debug helper.');
+        }
+
+        $useSandbox = getenv('FLAGSHIP_BASE_ENV') === 'test';
+        Configuration::updateValue('flagship_api_token', $token);
+        Configuration::updateValue('flagship_test_env', $useSandbox ? 1 : 0);
+
+        $address = new Address();
+        $address->company = '';
+        $address->id_country = 2; // Ship to US
+        $address->id_state = 2;   // NY
+        $address->city = 'New York';
+        $address->postcode = '10001';
+
+        Context::getContext()->cart->products = [
+            [
+                'quantity' => 1,
+                'width' => 4,
+                'height' => 5,
+                'depth' => 6,
+                'weight' => 2,
+                'name' => 'Widget A',
+                'is_virtual' => false,
+            ],
+            [
+                'quantity' => 1,
+                'width' => 2,
+                'height' => 3,
+                'depth' => 4,
+                'weight' => 1.5,
+                'name' => 'Widget B',
+                'is_virtual' => false,
+            ],
+        ];
+
+        $payload = $this->module->publicBuildCheckoutPayload($address);
+        fwrite(STDERR, "SmartShip payload:\n".json_encode($payload, JSON_PRETTY_PRINT)."\n");
+
+        $request = new FlagshipDetailedQuoteRequest(
+            $token,
+            $this->module->getApiBaseUrl(),
+            $payload,
+            'Prestashop',
+            _PS_VERSION_
+        );
+
+        $request->setStoreName('Flagship Test Debug');
+        $rates = $request->executeWithDetails()->sortByPrice();
+
+        fwrite(STDERR, "Returned services:\n");
+        foreach ($rates as $rate) {
+            fwrite(
+                STDERR,
+                sprintf(
+                    " - %s %s => %.2f\n",
+                    $rate->getCourierName(),
+                    $rate->getCourierDescription(),
+                    $rate->getTotal()
+                )
+            );
+        }
+
+        $this->assertNotEmpty(iterator_to_array($rates));
+    }
 
     public function testGetBaseUrlSwitchesToSandbox(): void
     {
