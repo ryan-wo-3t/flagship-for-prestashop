@@ -472,9 +472,19 @@ if (!class_exists('DbQuery')) {
 if (!class_exists('Country')) {
     class Country
     {
+        private static $isoMap = [
+            1 => 'CA',
+            2 => 'US',
+        ];
+
         public static function getIsoById($id)
         {
-            return 'CA';
+            return self::$isoMap[$id] ?? 'CA';
+        }
+
+        public static function setIsoById($id, $iso): void
+        {
+            self::$isoMap[$id] = $iso;
         }
     }
 }
@@ -482,9 +492,19 @@ if (!class_exists('Country')) {
 if (!class_exists('State')) {
     class State
     {
+        private static $isoMap = [
+            1 => 'QC',
+            2 => 'NY',
+        ];
+
         public static function getIsoById($id)
         {
-            return 'QC';
+            return self::$isoMap[$id] ?? 'QC';
+        }
+
+        public static function setIsoById($id, $iso): void
+        {
+            self::$isoMap[$id] = $iso;
         }
     }
 }

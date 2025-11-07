@@ -324,6 +324,19 @@ final class FlagshipShippingTest extends TestCase
                     'transit_time' => '3',
                 ],
             ]),
+            new Rate((object)[
+                'price' => (object)[
+                    'subtotal' => 15.0,
+                    'taxes' => ['GST' => 2.0],
+                ],
+                'service' => (object)[
+                    'courier_name' => 'FedEx',
+                    'courier_desc' => 'International Connect Plus',
+                    'courier_code' => 'FXCON',
+                    'estimated_delivery_date' => '2025-01-03',
+                    'transit_time' => '4',
+                ],
+            ]),
         ]);
 
         $prepared = $this->module->publicPrepareRates($rates);
@@ -332,6 +345,10 @@ final class FlagshipShippingTest extends TestCase
         $this->assertSame('Standard', $prepared[1]['courier']);
         $this->assertSame(10.5, $prepared[0]['subtotal']);
         $this->assertSame(1.5, $prepared[0]['taxes']);
+
+        $this->assertSame('FedEx International Connect Plus', $prepared[2]['courier']);
+        $this->assertSame(15.0, $prepared[2]['subtotal']);
+        $this->assertSame(2.0, $prepared[2]['taxes']);
     }
 
     public function testBuildCheckoutPayloadNormalizesAddresses(): void
@@ -349,6 +366,24 @@ final class FlagshipShippingTest extends TestCase
         $this->assertSame('imperial', $payload['packages']['units']);
         $this->assertSame('package', $payload['packages']['type']);
         $this->assertSame('goods', $payload['packages']['content']);
+    }
+
+    public function testBuildCheckoutPayloadSupportsCanadaToUsaShipments(): void
+    {
+        $address = new Address();
+        $address->id_country = 2; // US
+        $address->id_state = 2; // NY
+        $address->city = 'New York';
+        $address->postcode = '10001';
+        $address->company = '';
+
+        $payload = $this->module->publicBuildCheckoutPayload($address);
+
+        $this->assertSame('CA', $payload['from']['country']);
+        $this->assertSame('QC', $payload['from']['state']);
+        $this->assertSame('US', $payload['to']['country']);
+        $this->assertSame('NY', $payload['to']['state']);
+        $this->assertFalse($payload['to']['is_commercial']);
     }
 
     public function testQuoteDebugLoggingCanBeToggled(): void
@@ -442,6 +477,68 @@ final class FlagshipShippingTest extends TestCase
         $this->assertSame(4.0, $this->module->lastPackingPayload['items'][0]['width']);
         $this->assertSame(2.0, $this->module->lastPackingPayload['items'][1]['width']);
     }
+
+    /**
+     * Debug helper: Uncomment this test to print live SmartShip rates (requires a real API token).
+     *
+     * Steps:
+     *   1. Export FLAGSHIP_TEST_API_TOKEN with your SmartShip sandbox token.
+     *   2. (Optional) Export FLAGSHIP_BASE_ENV=test to hit the sandbox; omit for production.
+     *   3. Uncomment the test below and run PHPUnit; rates will be printed to STDERR.
+     *
+     * NOTE: This test makes a real HTTP call and includes customer data in the payload.
+     *       Only use it locally while debugging and re-comment it before committing.
+     */
+    /*
+    public function testDebugPrintSmartShipRates(): void
+    {
+        $token = getenv('FLAGSHIP_TEST_API_TOKEN');
+        if (!$token) {
+            $this->markTestSkipped('Set FLAGSHIP_TEST_API_TOKEN to run this debug helper.');
+        }
+
+        $useSandbox = getenv('FLAGSHIP_BASE_ENV') === 'test';
+        Configuration::updateValue('flagship_api_token', $token);
+        Configuration::updateValue('flagship_test_env', $useSandbox ? 1 : 0);
+
+        $address = new Address();
+        $address->company = '';
+        $address->id_country = 2; // Ship to US
+        $address->id_state = 2;   // NY
+        $address->city = 'New York';
+        $address->postcode = '10001';
+
+        $payload = $this->module->publicBuildCheckoutPayload($address);
+
+        fwrite(STDERR, "SmartShip payload:\n".json_encode($payload, JSON_PRETTY_PRINT)."\n");
+
+        $request = new FlagshipDetailedQuoteRequest(
+            $token,
+            $this->module->getApiBaseUrl(),
+            $payload,
+            'Prestashop',
+            _PS_VERSION_
+        );
+
+        $request->setStoreName('Flagship Test Debug');
+        $rates = $request->executeWithDetails()->sortByPrice();
+
+        fwrite(STDERR, "Returned services:\n");
+        foreach ($rates as $rate) {
+            fwrite(
+                STDERR,
+                sprintf(
+                    " - %s %s => %.2f\n",
+                    $rate->getCourierName(),
+                    $rate->getCourierDescription(),
+                    $rate->getTotal()
+                )
+            );
+        }
+
+        $this->assertNotEmpty($rates);
+    }
+    */
 
     public function testGetBaseUrlSwitchesToSandbox(): void
     {
