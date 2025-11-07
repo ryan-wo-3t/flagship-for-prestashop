@@ -30,6 +30,7 @@ if (!defined('_PS_VERSION_')) {
 if (file_exists(__DIR__ . '/vendor/autoload.php')) {
     include_once __DIR__ . '/vendor/autoload.php';
 }
+require_once __DIR__ . '/classes/FlagshipDetailedQuoteRequest.php';
 
 use Flagship\Shipping\Exceptions\GetShipmentByIdException;
 use Flagship\Shipping\Exceptions\PackingException;
@@ -44,6 +45,10 @@ define('SMARTSHIP_TEST_WEB_URL','https://test-smartshipng.flagshipcompany.com');
 #[\AllowDynamicProperties]
 class FlagshipShipping extends CarrierModule
 {
+    private const CONFIG_CLEAN_CHECKOUT_OPTIONS = 'FS_CLEAN_CHECKOUT_OPTIONS';
+    private const CONFIG_DEBUG_PARTIAL_QUOTES = 'FS_DEBUG_PARTIAL_QUOTES';
+    private const CLEAN_CHECKOUT_OPTION_KEYS = ['signature_required', 'saturday_delivery', 'cod', 'insurance'];
+
     public $id_carrier;
     protected $config_form = false;
     protected $url;
@@ -82,6 +87,8 @@ class FlagshipShipping extends CarrierModule
         $this->registerHook('displayAdminOrderSide');
         $this->registerHook('actionValidateCustomerAddressForm');
         $this->registerHook('actionCartSave');
+
+        $this->ensureCheckoutConfigDefaults();
     }
 
     /**
@@ -119,6 +126,7 @@ class FlagshipShipping extends CarrierModule
             ');
 
         $this->logger->logDebug("Flagship for prestashop installed");
+        $this->ensureCheckoutConfigDefaults();
         return parent::install();
     }
 
@@ -130,6 +138,8 @@ class FlagshipShipping extends CarrierModule
         Configuration::deleteByName('flagship_markup');
         Configuration::deleteByName('flagship_residential');
         Configuration::deleteByName('flagship_test_env');
+        Configuration::deleteByName(self::CONFIG_CLEAN_CHECKOUT_OPTIONS);
+        Configuration::deleteByName(self::CONFIG_DEBUG_PARTIAL_QUOTES);
 
         $query = new DbQuery();
         $query->select('*')->from('flagship_shipping');
@@ -292,13 +302,18 @@ class FlagshipShipping extends CarrierModule
 
         $token = Configuration::get('flagship_api_token');
         $url = $this->getBaseUrl();
-        $flagship = new Flagship($token, $url, 'Prestashop', _PS_VERSION_);
         $payload = $this->getPayload($address);
 
         if (!isset(Context::getContext()->cookie->rates)) {
             $storeName = $this->context->shop->name;
             $this->logger->logDebug("Quotes payload: ".json_encode($payload));
-            $rates = $flagship->createQuoteRequest($payload)->setStoreName($storeName)->execute()->sortByPrice();
+            $quoteRequest = new FlagshipDetailedQuoteRequest($token, $url, $payload, 'Prestashop', _PS_VERSION_);
+            $quoteRequest->setStoreName($storeName);
+            $rates = $quoteRequest->executeWithDetails()->sortByPrice();
+            $this->logPartialQuoteWarnings(
+                (int)$quoteRequest->getResponseCode(),
+                $quoteRequest->getRawResponse()
+            );
             Context::getContext()->cookie->rates = 1;
             $ratesArray = $this->prepareRates($rates);
             $str = $this->getRatesString($ratesArray);
@@ -693,6 +708,19 @@ class FlagshipShipping extends CarrierModule
         ];
     }
 
+    protected function ensureCheckoutConfigDefaults() : void
+    {
+        $cleanOptions = Configuration::get(self::CONFIG_CLEAN_CHECKOUT_OPTIONS);
+        if ($cleanOptions === false || $cleanOptions === null) {
+            Configuration::updateValue(self::CONFIG_CLEAN_CHECKOUT_OPTIONS, 1);
+        }
+
+        $debugFlag = Configuration::get(self::CONFIG_DEBUG_PARTIAL_QUOTES);
+        if ($debugFlag === false || $debugFlag === null) {
+            Configuration::updateValue(self::CONFIG_DEBUG_PARTIAL_QUOTES, 1);
+        }
+    }
+
     protected function getBoxesForm() : array
     {
         return [
@@ -854,6 +882,11 @@ class FlagshipShipping extends CarrierModule
     protected function getBaseUrl() : string {
         $baseUrl = Configuration::get('flagship_test_env') == 1 ? SMARTSHIP_TEST_API_URL : SMARTSHIP_API_URL;
         return $baseUrl;
+    }
+
+    public function getApiBaseUrl() : string
+    {
+        return $this->getBaseUrl();
     }
 
     protected function setResidential(string $residential) : int {
@@ -1069,53 +1102,216 @@ class FlagshipShipping extends CarrierModule
 
     protected function getStateCode(int $code) : string
     {
-        if ($code == 0) {
-            return 'QC';
+        if ($code <= 0) {
+            return '';
         }
-        $sql = new DbQuery();
-        $sql->select('iso_code');
-        $sql->from('state', 's');
-        $sql->where('s.id_state = '.$code);
 
-        return Db::getInstance()->executeS($sql)[0]['iso_code'];
+        $isoCode = State::getIsoById($code);
+
+        if ($isoCode === false || $isoCode === null) {
+            return '';
+        }
+
+        return Tools::substr($isoCode, 0, 2);
     }
 
     protected function getPayload(Address $address) : array
     {
-
         $from = [
-            "city"=>Configuration::get('PS_SHOP_CITY'),
-            "country"=>Country::getIsoById(Configuration::get('PS_SHOP_COUNTRY_ID')),
-            "state"=>$this->getStateCode(Configuration::get('PS_SHOP_STATE_ID')),
-            "postal_code"=>Configuration::get('PS_SHOP_CODE'),
-            "is_commercial"=>true
+            "name" => $this->limitString(Configuration::get('PS_SHOP_NAME'), 29),
+            "attn" => $this->limitString(Configuration::get('PS_SHOP_NAME'), 20),
+            "address" => $this->limitString(Configuration::get('PS_SHOP_ADDR1'), 29),
+            "suite" => $this->formatSuite(Configuration::get('PS_SHOP_ADDR2')),
+            "city" => Configuration::get('PS_SHOP_CITY'),
+            "country" => Country::getIsoById(Configuration::get('PS_SHOP_COUNTRY_ID')),
+            "state" => $this->getStateCode((int)Configuration::get('PS_SHOP_STATE_ID')),
+            "postal_code" => Configuration::get('PS_SHOP_CODE'),
+            "phone" => Configuration::get('PS_SHOP_PHONE'),
+            "is_commercial" => true
         ];
 
         $to = [
-            "city"=>$address->city,
-            "country"=>Country::getIsoById($address->id_country),
-            "state"=>$this->getStateCode($address->id_state),
-            "postal_code"=>$address->postcode,
-            "is_commercial"=> Configuration::get('flagship_residential') ? false : true
+            "name" => $this->limitString($this->getDestinationName($address), 29),
+            "attn" => $this->limitString(trim($address->firstname.' '.$address->lastname), 20),
+            "address" => $this->limitString($address->address1, 29),
+            "suite" => $this->formatSuite($address->address2),
+            "city" => $address->city,
+            "country" => Country::getIsoById($address->id_country),
+            "state" => $this->getStateCode((int)$address->id_state),
+            "postal_code" => $address->postcode,
+            "phone" => !empty($address->phone) ? $address->phone : $address->phone_mobile,
+            "is_commercial" => $this->isCommercialDestination($address)
         ];
-        $packages = $this->getPackages();
+
+        $packages = $this->normalizePackages($this->getPackages());
 
         $payment = [
             "payer" => "F"
         ];
-        $options = [
-            "address_correction" => true
-        ];
 
-        $payload = [
+        $options = $this->cleanCheckoutOptions([
+            "address_correction" => true
+        ]);
+
+        return [
             "from" => $from,
             "to" => $to,
             "packages" => $packages,
             "payment" => $payment,
             "options" => $options
         ];
+    }
 
-        return $payload;
+    public function buildCheckoutPayload(Address $address) : array
+    {
+        return $this->getPayload($address);
+    }
+
+    protected function limitString(?string $value, int $length) : string
+    {
+        $trimmed = trim((string)$value);
+        if ($trimmed === '') {
+            return '';
+        }
+        return Tools::substr($trimmed, 0, $length);
+    }
+
+    protected function formatSuite(?string $value) : string
+    {
+        $suite = trim((string)$value);
+        if ($suite === '') {
+            return '';
+        }
+        return Tools::substr($suite, 0, 17);
+    }
+
+    protected function getDestinationName(Address $address) : string
+    {
+        if (!empty($address->company)) {
+            return $address->company;
+        }
+        return trim($address->firstname.' '.$address->lastname);
+    }
+
+    protected function isCommercialDestination(Address $address) : bool
+    {
+        return !empty($address->company);
+    }
+
+    protected function normalizePackages(array $packages) : array
+    {
+        $packages['units'] = 'imperial';
+        $packages['type'] = 'package';
+        $packages['content'] = 'goods';
+
+        return $packages;
+    }
+
+    protected function cleanCheckoutOptions(array $options) : array
+    {
+        if (!$this->shouldCleanCheckoutOptions()) {
+            return $options;
+        }
+
+        foreach (self::CLEAN_CHECKOUT_OPTION_KEYS as $optionKey) {
+            unset($options[$optionKey]);
+        }
+
+        return $options;
+    }
+
+    protected function shouldCleanCheckoutOptions() : bool
+    {
+        return (int)Configuration::get(self::CONFIG_CLEAN_CHECKOUT_OPTIONS) === 1;
+    }
+
+    protected function getItemDescription(?string $value) : string
+    {
+        $description = trim((string)$value);
+        if ($description === '') {
+            return 'Goods';
+        }
+
+        return Tools::substr($description, 0, 29);
+    }
+
+    protected function logPartialQuoteWarnings(int $statusCode, $response) : void
+    {
+        if ($statusCode !== 206 || (int)Configuration::get(self::CONFIG_DEBUG_PARTIAL_QUOTES) !== 1) {
+            return;
+        }
+
+        $errors = $this->extractPartialQuoteErrors($response);
+
+        if (empty($errors)) {
+            return;
+        }
+
+        $message = '[FlagShip] Partial quote errors: '.implode('; ', $errors);
+        PrestaShopLogger::addLog($message, 2, null, $this->name);
+    }
+
+    protected function extractPartialQuoteErrors($response) : array
+    {
+        if (!is_object($response)) {
+            return [];
+        }
+
+        $errorSections = [];
+
+        if (isset($response->errors)) {
+            $errorSections[] = (array)$response->errors;
+        }
+
+        if (isset($response->content) && isset($response->content->errors)) {
+            $errorSections[] = (array)$response->content->errors;
+        }
+
+        $messages = [];
+
+        foreach ($errorSections as $errors) {
+            foreach ($errors as $error) {
+                if (is_string($error)) {
+                    $messages[] = $error;
+                    continue;
+                }
+
+                if (is_object($error)) {
+                    $error = (array)$error;
+                }
+
+                if (!is_array($error)) {
+                    continue;
+                }
+
+                $parts = [];
+
+                $courier = $error['courier_name'] ?? $error['courier'] ?? null;
+                if (!empty($courier)) {
+                    $parts[] = $courier;
+                }
+
+                if (!empty($error['service']) && (empty($courier) || $error['service'] !== $courier)) {
+                    $parts[] = $error['service'];
+                }
+
+                if (!empty($error['service_name'])) {
+                    $parts[] = $error['service_name'];
+                }
+
+                $message = $error['message'] ?? $error['error'] ?? null;
+                if (!empty($message)) {
+                    $parts[] = $message;
+                }
+
+                $formatted = trim(implode(' ', $parts));
+                if ($formatted !== '') {
+                    $messages[] = $formatted;
+                }
+            }
+        }
+
+        return array_values(array_filter($messages));
     }
 
     protected function getBoxes() : array
@@ -1128,11 +1324,11 @@ class FlagshipShipping extends CarrierModule
         foreach ($rows as $row) {
             $boxes[] = [
                 "box_model" => $row["model"],
-                "length" => ceil($this->getDimension($row["length"])),
-                "width" => ceil($this->getDimension($row["width"])),
-                "height" => ceil($this->getDimension($row["height"])),
-                "weight" => $this->getWeight($row["weight"]),
-                "max_weight" => $this->getWeight($row["max_weight"])
+                "length" => (float)$this->getDimension($row["length"]),
+                "width" => (float)$this->getDimension($row["width"]),
+                "height" => (float)$this->getDimension($row["height"]),
+                "weight" => (float)$this->getWeight($row["weight"]),
+                "max_weight" => (float)$this->getWeight($row["max_weight"])
             ];
         }
         return $boxes;
@@ -1197,22 +1393,22 @@ class FlagshipShipping extends CarrierModule
     {
         if ($packings == null) {
             return [
-                'length' => 1,
-                'width' => 1,
-                'height' => 1,
-                'weight' => 1,
-                'description' => 'packed items'
+                'length' => 1.0,
+                'width' => 1.0,
+                'height' => 1.0,
+                'weight' => 1.0,
+                'description' => 'Goods'
             ];
         }
 
         $packedItems = [];
         foreach ($packings as $packing) {
             $packedItems[] = [
-                'length' => $packing->getLength(),
-                'width' => $packing->getWidth(),
-                'height' => $packing->getHeight(),
-                'weight' => max($packing->getWeight(),1),
-                'description' => $packing->getBoxModel()
+                'length' => (float)$packing->getLength(),
+                'width' => (float)$packing->getWidth(),
+                'height' => (float)$packing->getHeight(),
+                'weight' => max((float)$packing->getWeight(), 1.0),
+                'description' => $this->getItemDescription($packing->getBoxModel())
             ];
         }
 
@@ -1225,11 +1421,13 @@ class FlagshipShipping extends CarrierModule
 
         for ($i=0; $i < $qty; $i++) {
             $items[] = [
-                "width"  => $this->getDimension($product["width"]),
-                "height" => $this->getDimension($product["height"]),
-                "length" => $this->getDimension($product["depth"]),
-                "weight" => $this->getWeight($product["weight"]),
-                "description"=>is_null($order) ? $product["name"] : $product["product_name"]
+                "width"  => (float)$this->getDimension($product["width"]),
+                "height" => (float)$this->getDimension($product["height"]),
+                "length" => (float)$this->getDimension($product["depth"]),
+                "weight" => (float)$this->getWeight($product["weight"]),
+                "description" => $this->getItemDescription(is_null($order) ?
+                    $product["name"] :
+                    $product["product_name"])
             ];
         }
         return $items;
@@ -1240,10 +1438,10 @@ class FlagshipShipping extends CarrierModule
         if(Configuration::get('PS_DIMENSION_UNIT') === 'cm') {
             $dimension  = $dimension / 2.54;
         }
-        if(!Configuration::get('flagship_packing_api') || 0 == $dimension ) {
-            $dimension = max(ceil($dimension),1);
+        if ($dimension <= 0) {
+            return 1.0;
         }
-        return $dimension;
+        return (float)$dimension;
     }
 
     protected function getWeight($weight)
@@ -1253,10 +1451,11 @@ class FlagshipShipping extends CarrierModule
             $weight = $weight * $kgLbs;
         }
 
-        if(!Configuration::get('flagship_packing_api') || 0 == $weight) {
-            $weight = max(ceil($weight),1);
+        if ($weight <= 0) {
+            return 1.0;
         }
-        return $weight;
+
+        return (float)$weight;
     }
 
     protected function updateOrder(int $shipmentId, int $orderId) : bool

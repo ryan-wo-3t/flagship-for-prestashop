@@ -71,3 +71,11 @@ To change the transit time for a carrier
 ![Image of Transit Time](https://github.com/flagshipcompany/flagship-for-prestashop/blob/master/views/img/editCarrierTransitTime.jpg)
 
 ![Image of Transit Time Changed](https://github.com/flagshipcompany/flagship-for-prestashop/blob/master/views/img/editCarrierTransitTimeChanged.jpg)
+
+## Diagnosing missing carriers
+
+1. From your PrestaShop root, run `php modules/flagshipshipping/tools/flagship_diag/rate_check.php --cart-id=<ID>` (add `--address-id=<ID>` to override the delivery address). The script bootstraps PrestaShop, reuses the module’s checkout payload builder, and POSTs the exact JSON that checkout uses to `/ship/rates`.
+2. Review the printed HTTP status. `200` or `206` indicates a successful response; any other status means SmartShip rejected the payload and you should correct the reported error before retrying.
+3. Inspect the pretty-printed payload to confirm `from.state`/`to.state` are 2-letter ISO codes, `suite` fields match the second address line, and every package item shows decimal length/width/height/weight with `units` forced to `imperial`.
+4. Check the “Rates” section for a courier/service ⇒ total summary. If it’s empty, look at the “Errors” section (or your PrestaShop logs when HTTP `206`) for courier-specific reasons that can hide carriers at checkout.
+5. After making adjustments (address data, package dimensions, configuration flags), rerun the diagnostic to confirm carriers return as expected before retesting on the storefront.

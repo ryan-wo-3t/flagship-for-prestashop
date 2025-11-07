@@ -155,14 +155,14 @@ final class FlagshipShippingTest extends TestCase
         $this->assertEquals(1, $dimension);
     }
 
-    public function testGetWeightConvertsKilogramsAndRoundsUp(): void
+    public function testGetWeightConvertsKilogramsWithoutRounding(): void
     {
         Configuration::updateValue('PS_WEIGHT_UNIT', 'kg');
         Configuration::updateValue('flagship_packing_api', 0);
 
         $weight = $this->module->publicGetWeight(0.5);
 
-        $this->assertSame(2.0, $weight);
+        $this->assertEqualsWithDelta(1.10231, $weight, 0.0001);
     }
 
     public function testGetWeightGuaranteesMinimumOfOne(): void
@@ -216,11 +216,11 @@ final class FlagshipShippingTest extends TestCase
 
         $this->assertSame(
             [
-                'length' => 1,
-                'width' => 1,
-                'height' => 1,
-                'weight' => 1,
-                'description' => 'packed items',
+                'length' => 1.0,
+                'width' => 1.0,
+                'height' => 1.0,
+                'weight' => 1.0,
+                'description' => 'Goods',
             ],
             $items
         );

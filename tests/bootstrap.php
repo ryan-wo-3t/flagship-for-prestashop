@@ -144,6 +144,25 @@ if (!class_exists('Module')) {
     }
 }
 
+if (!class_exists('PrestaShopLogger')) {
+    class PrestaShopLogger
+    {
+        public static $logs = [];
+
+        public static function addLog(
+            $message,
+            $severity = 1,
+            $errorCode = null,
+            $objectType = null,
+            $objectId = null,
+            $allowDuplicate = true
+        ) {
+            self::$logs[] = $message;
+            return true;
+        }
+    }
+}
+
 if (!class_exists('CarrierModule')) {
     class CarrierModule extends Module
     {
@@ -460,6 +479,16 @@ if (!class_exists('Country')) {
     }
 }
 
+if (!class_exists('State')) {
+    class State
+    {
+        public static function getIsoById($id)
+        {
+            return 'QC';
+        }
+    }
+}
+
 Configuration::updateValue('flagship_fee', 0.0);
 Configuration::updateValue('flagship_markup', 0.0);
 Configuration::updateValue('flagship_residential', 0);
@@ -469,6 +498,8 @@ Configuration::updateValue('flagship_tracking_email', 0);
 Configuration::updateValue('flagship_packing_api', 0);
 Configuration::updateValue('PS_DIMENSION_UNIT', 'in');
 Configuration::updateValue('PS_WEIGHT_UNIT', 'lb');
+Configuration::updateValue('FS_CLEAN_CHECKOUT_OPTIONS', 1);
+Configuration::updateValue('FS_DEBUG_PARTIAL_QUOTES', 1);
 Configuration::updateValue('PS_SHOP_NAME', 'Flagship Test Shop');
 Configuration::updateValue('PS_SHOP_ADDR1', '123 Main');
 Configuration::updateValue('PS_SHOP_ADDR2', 'Suite 100');
