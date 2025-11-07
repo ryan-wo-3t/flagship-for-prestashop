@@ -498,6 +498,7 @@ Configuration::updateValue('flagship_tracking_email', 0);
 Configuration::updateValue('flagship_packing_api', 0);
 Configuration::updateValue('PS_DIMENSION_UNIT', 'in');
 Configuration::updateValue('PS_WEIGHT_UNIT', 'lb');
+Configuration::updateValue('FS_DEBUG_RATE_TRAFFIC', 0);
 Configuration::updateValue('FS_CLEAN_CHECKOUT_OPTIONS', 1);
 Configuration::updateValue('FS_DEBUG_PARTIAL_QUOTES', 1);
 Configuration::updateValue('PS_SHOP_NAME', 'Flagship Test Shop');

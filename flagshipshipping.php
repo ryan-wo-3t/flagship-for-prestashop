@@ -32,6 +32,7 @@ if (file_exists(__DIR__ . '/vendor/autoload.php')) {
 }
 require_once __DIR__ . '/classes/FlagshipDetailedQuoteRequest.php';
 
+use Flagship\Shipping\Collections\PackingCollection;
 use Flagship\Shipping\Exceptions\GetShipmentByIdException;
 use Flagship\Shipping\Exceptions\PackingException;
 use Flagship\Shipping\Flagship;
@@ -47,6 +48,7 @@ class FlagshipShipping extends CarrierModule
 {
     private const CONFIG_CLEAN_CHECKOUT_OPTIONS = 'FS_CLEAN_CHECKOUT_OPTIONS';
     private const CONFIG_DEBUG_PARTIAL_QUOTES = 'FS_DEBUG_PARTIAL_QUOTES';
+    private const CONFIG_DEBUG_QUOTE_TRAFFIC = 'FS_DEBUG_RATE_TRAFFIC';
     private const CLEAN_CHECKOUT_OPTION_KEYS = ['signature_required', 'saturday_delivery', 'cod', 'insurance'];
 
     public $id_carrier;
@@ -140,6 +142,7 @@ class FlagshipShipping extends CarrierModule
         Configuration::deleteByName('flagship_test_env');
         Configuration::deleteByName(self::CONFIG_CLEAN_CHECKOUT_OPTIONS);
         Configuration::deleteByName(self::CONFIG_DEBUG_PARTIAL_QUOTES);
+        Configuration::deleteByName(self::CONFIG_DEBUG_QUOTE_TRAFFIC);
 
         $query = new DbQuery();
         $query->select('*')->from('flagship_shipping');
@@ -314,6 +317,7 @@ class FlagshipShipping extends CarrierModule
                 (int)$quoteRequest->getResponseCode(),
                 $quoteRequest->getRawResponse()
             );
+            $this->logQuoteTrafficIfEnabled($payload, $quoteRequest->getRawResponse());
             Context::getContext()->cookie->rates = 1;
             $ratesArray = $this->prepareRates($rates);
             $str = $this->getRatesString($ratesArray);
@@ -700,6 +704,27 @@ class FlagshipShipping extends CarrierModule
                             'name' => 'name',
                         ]
                     ],
+                    [
+                        'col' => 4,
+                        'type' => 'select',
+                        'label' => $this->l('Checkout payload debug logging'),
+                        'desc' => $this->l('Logs SmartShip quote payloads and responses to the PrestaShop log when enabled. Contains customer data, so leave disabled unless troubleshooting missing carriers.'),
+                        'name' => self::CONFIG_DEBUG_QUOTE_TRAFFIC,
+                        'options' => [
+                            'query' => [
+                                [
+                                    'key' => 0,
+                                    'name' => 'No'
+                                ],
+                                [
+                                    'key' => 1,
+                                    'name' => 'Yes'
+                                ]
+                            ],
+                            'id' => 'key',
+                            'name' => 'name',
+                        ]
+                    ],
                 ],
                 'submit' => [
                     'title' => $this->l('Save'),
@@ -718,6 +743,11 @@ class FlagshipShipping extends CarrierModule
         $debugFlag = Configuration::get(self::CONFIG_DEBUG_PARTIAL_QUOTES);
         if ($debugFlag === false || $debugFlag === null) {
             Configuration::updateValue(self::CONFIG_DEBUG_PARTIAL_QUOTES, 1);
+        }
+
+        $quoteDebug = Configuration::get(self::CONFIG_DEBUG_QUOTE_TRAFFIC);
+        if ($quoteDebug === false || $quoteDebug === null) {
+            Configuration::updateValue(self::CONFIG_DEBUG_QUOTE_TRAFFIC, 0);
         }
     }
 
@@ -791,6 +821,7 @@ class FlagshipShipping extends CarrierModule
             'flagship_email_on_label' => Configuration::get('flagship_email_on_label'),
             'flagship_packing_api' => Configuration::get('flagship_packing_api'),
             'flagship_tracking_email' => Configuration::get('flagship_tracking_email'),
+            self::CONFIG_DEBUG_QUOTE_TRAFFIC => Configuration::get(self::CONFIG_DEBUG_QUOTE_TRAFFIC),
         ];
     }
 
@@ -811,6 +842,8 @@ class FlagshipShipping extends CarrierModule
         $emailOnLabel = empty(Tools::getValue('flagship_email_on_label')) ? 0 : Tools::getValue('flagship_email_on_label');
         $packing = empty(Tools::getValue('flagship_packing_api')) ? 0 : Tools::getValue('flagship_packing_api');
         $trackingEmail = empty(Tools::getValue('flagship_tracking_email')) ? 0 : Tools::getValue('flagship_tracking_email');
+        $quoteDebug = Tools::getValue(self::CONFIG_DEBUG_QUOTE_TRAFFIC);
+        $quoteDebug = $quoteDebug === false || $quoteDebug === null ? Configuration::get(self::CONFIG_DEBUG_QUOTE_TRAFFIC) : $quoteDebug;
 
         if (is_string(Configuration::get('flagship_fee')) && is_string(Configuration::get('flagship_api_token')) && is_string(Configuration::get('flagship_markup')) ) { //fields exist in db
             $feeFlag = $fee != Configuration::get('flagship_fee') ?
@@ -827,12 +860,14 @@ class FlagshipShipping extends CarrierModule
                                 Configuration::updateValue('flagship_tracking_email', $trackingEmail) : 0;
             $packing = $packing != Configuration::get('flagship_packing_api') ?
                                 Configuration::updateValue('flagship_packing_api', $packing) : 0;
+            $quoteDebugFlag = $quoteDebug != Configuration::get(self::CONFIG_DEBUG_QUOTE_TRAFFIC) ?
+                                Configuration::updateValue(self::CONFIG_DEBUG_QUOTE_TRAFFIC, $quoteDebug) : 0;
 
-            return $this->displayConfirmation($this->getReturnMessage($apiToken, $testEnv, $feeFlag, $markupFlag, $residentialFlag,$emailOnLabel, $packing));
+            return $this->displayConfirmation($this->getReturnMessage($apiToken, $testEnv, $feeFlag, $markupFlag, $residentialFlag,$emailOnLabel, $packing, $quoteDebugFlag));
 
         }
 
-        if ($this->setApiToken($apiToken, $testEnv) && $this->setMarkup($markup) && $this->setHandlingFee($fee) && $this->setTestEnv($testEnv) && $this->setResidential($residential) && $this->setEmailOnLabel($emailOnLabel)) {
+        if ($this->setApiToken($apiToken, $testEnv) && $this->setMarkup($markup) && $this->setHandlingFee($fee) && $this->setTestEnv($testEnv) && $this->setResidential($residential) && $this->setEmailOnLabel($emailOnLabel) && $this->setQuoteDebug($quoteDebug)) {
             $storeName = $this->context->shop->name;
             $url = $this->getBaseUrl();
             $flagship = new Flagship($apiToken, $url, 'Prestashop', _PS_VERSION_);
@@ -844,7 +879,7 @@ class FlagshipShipping extends CarrierModule
         return $this->displayWarning($this->l("Oops! Token is invalid or same token is set."));
     }
 
-    protected function getReturnMessage(string $apiToken, int $testEnv, int $feeFlag, int $markupFlag, int $residentialFlag, int $emailOnLabel, int $packing) : string
+    protected function getReturnMessage(string $apiToken, int $testEnv, int $feeFlag, int $markupFlag, int $residentialFlag, int $emailOnLabel, int $packing, int $quoteDebugFlag) : string
     {
         $returnMessage = "<b>";
         $validToken = 0;
@@ -861,7 +896,7 @@ class FlagshipShipping extends CarrierModule
             $returnMessage .= "Token not updated! ";
         }
 
-        if($feeFlag || $markupFlag || $residentialFlag || $emailOnLabel || $packing){
+        if($feeFlag || $markupFlag || $residentialFlag || $emailOnLabel || $packing || $quoteDebugFlag){
             $returnMessage .= "Settings Updated";
         }
 
@@ -903,6 +938,10 @@ class FlagshipShipping extends CarrierModule
 
     protected function setTrackingEmail(string $trackingEmail) : int {
         return Configuration::updateValue('flagship_tracking_email', $trackingEmail);
+    }
+
+    protected function setQuoteDebug(string $quoteDebug) : int {
+        return Configuration::updateValue(self::CONFIG_DEBUG_QUOTE_TRAFFIC, $quoteDebug);
     }
 
     protected function insertBoxDetails() : string
@@ -1314,6 +1353,24 @@ class FlagshipShipping extends CarrierModule
         return array_values(array_filter($messages));
     }
 
+    protected function logQuoteTrafficIfEnabled(array $payload, $response) : void
+    {
+        if (!$this->isQuoteDebugEnabled()) {
+            return;
+        }
+
+        PrestaShopLogger::addLog('[FlagShip] Checkout quote payload: '.json_encode($payload), 1, null, $this->name);
+
+        if ($response !== null) {
+            PrestaShopLogger::addLog('[FlagShip] Checkout quote response: '.json_encode($response), 1, null, $this->name);
+        }
+    }
+
+    protected function isQuoteDebugEnabled() : bool
+    {
+        return (int)Configuration::get(self::CONFIG_DEBUG_QUOTE_TRAFFIC) === 1;
+    }
+
     protected function getBoxes() : array
     {
         $query = new DbQuery();
@@ -1358,9 +1415,6 @@ class FlagshipShipping extends CarrierModule
             ];
         }
 
-        $token = Configuration::get('flagship_api_token');
-        $url = $this->getBaseUrl();
-        $flagship = new Flagship($token, $url, 'Prestashop', _PS_VERSION_);
         $packingPayload = [
             'items' => $items,
             'boxes' => $boxes,
@@ -1369,7 +1423,7 @@ class FlagshipShipping extends CarrierModule
 
         try{
             $this->logger->logDebug("Packing payload: ".json_encode($packingPayload));
-            $packings = $flagship->packingRequest($packingPayload)->execute();
+            $packings = $this->executePackingRequest($packingPayload);
             $this->logger->logDebug("Packing response: ".json_encode($packings));
             $packedItems = $this->getPackedItems($packings);
 
@@ -1456,6 +1510,15 @@ class FlagshipShipping extends CarrierModule
         }
 
         return (float)$weight;
+    }
+
+    protected function executePackingRequest(array $packingPayload) : PackingCollection
+    {
+        $token = Configuration::get('flagship_api_token');
+        $url = $this->getBaseUrl();
+        $flagship = new Flagship($token, $url, 'Prestashop', _PS_VERSION_);
+
+        return $flagship->packingRequest($packingPayload)->execute();
     }
 
     protected function updateOrder(int $shipmentId, int $orderId) : bool

@@ -4,11 +4,16 @@ declare(strict_types=1);
 
 use Flagship\Shipping\Collections\PackingCollection;
 use Flagship\Shipping\Collections\RatesCollection;
+use Flagship\Shipping\Objects\Packing;
 use Flagship\Shipping\Objects\Rate;
 use PHPUnit\Framework\TestCase;
 
 class FlagshipShippingProxy extends FlagshipShipping
 {
+    public ?array $mockBoxes = null;
+    public ?PackingCollection $mockPackingResponse = null;
+    public ?array $lastPackingPayload = null;
+
     public function publicGetRatesString(array $ratesArray): string
     {
         return $this->getRatesString($ratesArray);
@@ -44,6 +49,11 @@ class FlagshipShippingProxy extends FlagshipShipping
         return $this->getItemsByQty($product, $order, $items);
     }
 
+    public function publicGetPackages($order = null): array
+    {
+        return $this->getPackages($order);
+    }
+
     public function publicPrepareRates(RatesCollection $rates): array
     {
         return $this->prepareRates($rates);
@@ -57,6 +67,36 @@ class FlagshipShippingProxy extends FlagshipShipping
     public function publicVerifyToken(string $token, int $testEnv): bool
     {
         return $this->verifyToken($token, $testEnv);
+    }
+
+    public function publicBuildCheckoutPayload(Address $address): array
+    {
+        return $this->buildCheckoutPayload($address);
+    }
+
+    public function publicLogQuoteTraffic(array $payload, $response): void
+    {
+        $this->logQuoteTrafficIfEnabled($payload, $response);
+    }
+
+    protected function getBoxes(): array
+    {
+        if (is_array($this->mockBoxes)) {
+            return $this->mockBoxes;
+        }
+
+        return parent::getBoxes();
+    }
+
+    protected function executePackingRequest(array $packingPayload): PackingCollection
+    {
+        $this->lastPackingPayload = $packingPayload;
+
+        if ($this->mockPackingResponse instanceof PackingCollection) {
+            return $this->mockPackingResponse;
+        }
+
+        return parent::executePackingRequest($packingPayload);
     }
 }
 
@@ -83,6 +123,7 @@ final class FlagshipShippingTest extends TestCase
         Context::getContext()->controller->php_self = 'index';
 
         $this->module = new FlagshipShippingProxy();
+        PrestaShopLogger::$logs = [];
     }
 
     public function testGetRatesStringTrimsTrailingComma(): void
@@ -291,6 +332,115 @@ final class FlagshipShippingTest extends TestCase
         $this->assertSame('Standard', $prepared[1]['courier']);
         $this->assertSame(10.5, $prepared[0]['subtotal']);
         $this->assertSame(1.5, $prepared[0]['taxes']);
+    }
+
+    public function testBuildCheckoutPayloadNormalizesAddresses(): void
+    {
+        $address = new Address();
+        $address->company = 'Acme Corp';
+        $address->address2 = 'Warehouse Floor 123456789';
+
+        $payload = $this->module->publicBuildCheckoutPayload($address);
+
+        $this->assertSame('QC', $payload['from']['state']);
+        $this->assertSame('QC', $payload['to']['state']);
+        $this->assertSame(substr('Warehouse Floor 123456789', 0, 17), $payload['to']['suite']);
+        $this->assertTrue($payload['to']['is_commercial']);
+        $this->assertSame('imperial', $payload['packages']['units']);
+        $this->assertSame('package', $payload['packages']['type']);
+        $this->assertSame('goods', $payload['packages']['content']);
+    }
+
+    public function testQuoteDebugLoggingCanBeToggled(): void
+    {
+        Configuration::updateValue('FS_DEBUG_RATE_TRAFFIC', 1);
+        PrestaShopLogger::$logs = [];
+
+        $payload = ['from' => ['city' => 'Montreal']];
+        $response = (object)['status' => 'ok'];
+
+        $this->module->publicLogQuoteTraffic($payload, $response);
+
+        $this->assertCount(2, PrestaShopLogger::$logs);
+        $this->assertStringContainsString('payload', PrestaShopLogger::$logs[0]);
+        $this->assertStringContainsString('response', PrestaShopLogger::$logs[1]);
+
+        Configuration::updateValue('FS_DEBUG_RATE_TRAFFIC', 0);
+        PrestaShopLogger::$logs = [];
+        $this->module->publicLogQuoteTraffic($payload, $response);
+        $this->assertCount(0, PrestaShopLogger::$logs);
+    }
+
+    public function testGetPackagesUsesPackingApiResponse(): void
+    {
+        Configuration::updateValue('flagship_packing_api', 1);
+        Configuration::updateValue('flagship_api_token', 'token');
+
+        Context::getContext()->cart->products = [
+            [
+                'quantity' => 1,
+                'width' => 4,
+                'height' => 5,
+                'depth' => 6,
+                'weight' => 2,
+                'name' => 'Widget A',
+                'is_virtual' => false,
+            ],
+            [
+                'quantity' => 1,
+                'width' => 2,
+                'height' => 3,
+                'depth' => 4,
+                'weight' => 1.5,
+                'name' => 'Widget B',
+                'is_virtual' => false,
+            ],
+        ];
+
+        $this->module->mockBoxes = [
+            [
+                'box_model' => 'Small Box',
+                'length' => 10.0,
+                'width' => 8.0,
+                'height' => 6.0,
+                'weight' => 1.0,
+                'max_weight' => 15.0,
+            ],
+            [
+                'box_model' => 'Large Box',
+                'length' => 20.0,
+                'width' => 16.0,
+                'height' => 12.0,
+                'weight' => 2.0,
+                'max_weight' => 40.0,
+            ],
+        ];
+
+        $packingCollection = new PackingCollection([
+            new Packing((object)[
+                'box_model' => 'Small Box',
+                'length' => 10,
+                'width' => 8,
+                'height' => 6,
+                'weight' => 5,
+            ]),
+        ]);
+
+        $this->module->mockPackingResponse = $packingCollection;
+
+        $packages = $this->module->publicGetPackages();
+
+        $this->assertSame('Small Box', $packages['items'][0]['description']);
+        $this->assertSame(10.0, $packages['items'][0]['length']);
+        $this->assertSame(5.0, $packages['items'][0]['weight']);
+        $this->assertSame('imperial', $packages['units']);
+        $this->assertSame('goods', $packages['content']);
+
+        $this->assertNotNull($this->module->lastPackingPayload);
+        $this->assertCount(2, $this->module->lastPackingPayload['boxes']);
+        $this->assertCount(2, $this->module->lastPackingPayload['items']);
+        $this->assertSame(4.0, $this->module->lastPackingPayload['items'][0]['width']);
+        $this->assertSame(2.0, $this->module->lastPackingPayload['items'][1]['width']);
     }
 
     public function testGetBaseUrlSwitchesToSandbox(): void
