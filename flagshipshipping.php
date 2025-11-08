@@ -541,7 +541,8 @@ class FlagshipShipping extends CarrierModule
             "is_commercial"=>$isCommercial
         ];
 
-        $package = $this->getPackages($order);
+        $destinationCountryIso = Country::getIsoById((int)$addressTo->id_country);
+        $package = $this->getPackages($order, $destinationCountryIso);
 
         $options = [
             "signature_required"=>false,
@@ -561,6 +562,10 @@ class FlagshipShipping extends CarrierModule
             'options' => $options,
             'payment' => $payment
         ];
+        $customsInvoice = $this->buildCustomsInvoiceForOrder($order, $destinationCountryIso);
+        if (!empty($customsInvoice)) {
+            $payload['customs_invoice'] = $customsInvoice;
+        }
         return $payload;
     }
 
@@ -1242,7 +1247,8 @@ class FlagshipShipping extends CarrierModule
             "is_commercial" => $this->isCommercialDestination($address)
         ];
 
-        $packages = $this->normalizePackages($this->getPackages());
+        $destinationCountryIso = Country::getIsoById($address->id_country);
+        $packages = $this->normalizePackages($this->getPackages(null, $destinationCountryIso));
 
         $payment = [
             "payer" => "F"
@@ -1252,13 +1258,15 @@ class FlagshipShipping extends CarrierModule
             "address_correction" => true
         ]);
 
-        return [
+        $payload = [
             "from" => $from,
             "to" => $to,
             "packages" => $packages,
             "payment" => $payment,
             "options" => $options
         ];
+
+        return $payload;
     }
 
     public function buildCheckoutPayload(Address $address) : array
@@ -1451,7 +1459,7 @@ class FlagshipShipping extends CarrierModule
         return $boxes;
     }
 
-    protected function getPackages($order = null) : array
+    protected function getPackages($order = null, ?string $destinationCountryIso = null) : array
     {
         $products = is_null($order) ? Context::getContext()->cart->getProducts() : $order->getProductsDetail();
         $packages = [];
@@ -1464,15 +1472,15 @@ class FlagshipShipping extends CarrierModule
             $items = $this->getItemsByQty($product, $order, $items);
         }
 
-        if(!Configuration::get('flagship_packing_api') || count($boxes) == 0){ //use items as they are if boxes are not set
-            $temp = $items;
+        if ($destinationCountryIso === null) {
+            $destinationCountryIso = $this->resolveDestinationCountryIso($order);
+        }
 
-            return [
-                'items' => $temp,
-                "units" => "imperial",
-                "type"  => "package",
-                "content" => "goods"
-            ];
+        $storeCountryIso = $this->getStoreCountryIso();
+        $packingEnabled = Configuration::get('flagship_packing_api') && count($boxes) > 0;
+
+        if(!$packingEnabled){
+            return $this->buildFallbackPackages($items, $destinationCountryIso, $storeCountryIso);
         }
 
         $packingPayload = [
@@ -1497,10 +1505,26 @@ class FlagshipShipping extends CarrierModule
             return $packages;
         } catch (PackingException $e) {
             $this->logger->logError("Error packing items: ".$e->getMessage());
+            $this->logPackingFallbackWarning('Packing API failed ('.$e->getMessage().'). Consolidating items into a single package.');
             Cache::store('packagesCount', 0);
-            return [];
+            return $this->buildAggregatedPackage($items, true);
         }
         
+    }
+
+    protected function buildFallbackPackages(array $items, ?string $destinationCountryIso, string $storeCountryIso) : array
+    {
+        if ($this->shouldAggregatePackages($destinationCountryIso, $storeCountryIso)) {
+            $this->logPackingFallbackWarning('Packing API disabled or no boxes configured. Consolidating items into a single package for cross-border shipment.');
+            return $this->buildAggregatedPackage($items);
+        }
+
+        return [
+            'items' => $items,
+            "units" => "imperial",
+            "type"  => "package",
+            "content" => "goods"
+        ];
     }
 
     protected function buildOrderPackageSummary(Order $order) : array
@@ -1531,6 +1555,68 @@ class FlagshipShipping extends CarrierModule
         ];
     }
 
+    protected function buildCustomsInvoiceForOrder(Order $order, string $destinationCountryIso) : array
+    {
+        if (!$this->requiresCustoms($destinationCountryIso)) {
+            return [];
+        }
+
+        $products = $order->getProductsDetail();
+        if (empty($products)) {
+            return [];
+        }
+
+        $currency = Currency::getIsoCodeById((int)$order->id_currency);
+
+        return $this->formatCustomsInvoiceItems($products, $currency, $this->getStoreCountryIso(), true);
+    }
+
+    protected function requiresCustoms(?string $destinationCountryIso) : bool
+    {
+        if (empty($destinationCountryIso)) {
+            return false;
+        }
+
+        return Tools::strtoupper($destinationCountryIso) !== $this->getStoreCountryIso();
+    }
+
+    protected function formatCustomsInvoiceItems(array $products, string $currencyIso, string $originCountryIso, bool $fromOrder) : array
+    {
+        $items = [];
+
+        foreach ($products as $product) {
+            $qty = (int)($fromOrder ? ($product['product_quantity'] ?? 0) : ($product['quantity'] ?? 0));
+            if ($qty <= 0) {
+                continue;
+            }
+
+            $unitWeight = (float)($fromOrder ? ($product['product_weight'] ?? 0) : ($product['weight'] ?? 0));
+            $unitPrice = (float)($fromOrder ? ($product['unit_price_tax_excl'] ?? 0) : ($product['price'] ?? 0));
+            $description = $fromOrder ? ($product['product_name'] ?? '') : ($product['name'] ?? '');
+            $reference = $fromOrder ? ($product['product_reference'] ?? '') : ($product['reference'] ?? '');
+
+            $items[] = [
+                'description' => Tools::substr($description, 0, 50),
+                'quantity' => $qty,
+                'weight' => max(0.1, $this->getWeight($unitWeight)),
+                'value' => max(0.01, $unitPrice) * $qty,
+                'origin_country' => $originCountryIso,
+                'sku' => Tools::substr($reference, 0, 30),
+                'hs_code' => '',
+                'customs_description' => Tools::substr($description, 0, 50),
+            ];
+        }
+
+        if (empty($items)) {
+            return [];
+        }
+
+        return [
+            'currency' => $currencyIso,
+            'items' => $items
+        ];
+    }
+
     protected function getPackedItems(?\Flagship\Shipping\Collections\PackingCollection $packings = null) : array
     {
         if ($packings == null) {
@@ -1555,6 +1641,90 @@ class FlagshipShipping extends CarrierModule
         }
 
         return $packedItems;
+    }
+
+    protected function resolveDestinationCountryIso($order = null) : ?string
+    {
+        if ($order instanceof Order) {
+            $address = new Address($order->id_address_delivery);
+            return Country::getIsoById((int)$address->id_country);
+        }
+
+        $cart = Context::getContext()->cart;
+        if ($cart && $cart->id_address_delivery) {
+            $address = new Address($cart->id_address_delivery);
+            if (Validate::isLoadedObject($address)) {
+                return Country::getIsoById((int)$address->id_country);
+            }
+        }
+
+        return null;
+    }
+
+    protected function getStoreCountryIso() : string
+    {
+        return Tools::strtoupper(Country::getIsoById(Configuration::get('PS_SHOP_COUNTRY_ID')));
+    }
+
+    protected function shouldAggregatePackages(?string $destinationCountryIso, string $storeCountryIso) : bool
+    {
+        if (empty($destinationCountryIso)) {
+            return false;
+        }
+
+        return Tools::strtoupper($destinationCountryIso) !== $storeCountryIso;
+    }
+
+    protected function logPackingFallbackWarning(string $message) : void
+    {
+        PrestaShopLogger::addLog('[FlagShip] '.$message, 2, null, $this->name);
+    }
+
+    protected function buildAggregatedPackage(array $items, bool $dueToPackingError = false) : array
+    {
+        if (empty($items)) {
+            return [
+                'items' => [],
+                'units' => 'imperial',
+                'type' => 'package',
+                'content' => 'goods'
+            ];
+        }
+
+        $aggregate = [
+            'length' => 0.0,
+            'width' => 0.0,
+            'height' => 0.0,
+            'weight' => 0.0,
+            'description' => $dueToPackingError ? 'FlagShip fallback package' : 'Combined goods'
+        ];
+
+        foreach ($items as $item) {
+            $aggregate['length'] = max($aggregate['length'], (float)($item['length'] ?? 0));
+            $aggregate['width'] = max($aggregate['width'], (float)($item['width'] ?? 0));
+            $aggregate['height'] += (float)($item['height'] ?? 0);
+            $aggregate['weight'] += (float)($item['weight'] ?? 0);
+        }
+
+        if ($aggregate['length'] <= 0) {
+            $aggregate['length'] = 1.0;
+        }
+        if ($aggregate['width'] <= 0) {
+            $aggregate['width'] = 1.0;
+        }
+        if ($aggregate['height'] <= 0) {
+            $aggregate['height'] = 1.0;
+        }
+        if ($aggregate['weight'] <= 0) {
+            $aggregate['weight'] = 1.0;
+        }
+
+        return [
+            'items' => [$aggregate],
+            'units' => 'imperial',
+            'type' => 'package',
+            'content' => 'goods'
+        ];
     }
 
     protected function getItemsByQty($product, $order, $items) : array

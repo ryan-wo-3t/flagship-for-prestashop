@@ -21,6 +21,7 @@
 - Tests use PHPUnit 9 (`vendor\bin\phpunit`); individual tests can be filtered, e.g., `vendor\bin\phpunit --filter testBuildCheckoutPayloadNormalizesAddresses`.
 - Add new tests to `tests/FlagshipShippingTest.php`; mirror existing naming (`test…`) and leverage the proxy helper to access protected methods.
 - Keep scenario fixtures deterministic—mock packing responses or configuration via the bootstrap stubs when possible.
+- Always rerun relevant tests locally before replying; double-check your changes satisfy the latest requirements and state any assumptions explicitly.
 
 ## Commit & Pull Request Guidelines
 - Use concise, action-oriented commit subjects (e.g., “Normalize SmartShip payload…”); the history favors sentence case without trailing periods.

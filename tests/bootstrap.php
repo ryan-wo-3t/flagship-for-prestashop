@@ -94,10 +94,22 @@ if (!class_exists('Cart')) {
     class Cart
     {
         public $products = [];
+        public $id_currency = 1;
+        public $id_address_delivery = 1;
 
         public function getProducts(): array
         {
             return $this->products;
+        }
+    }
+}
+
+if (!class_exists('Validate')) {
+    class Validate
+    {
+        public static function isLoadedObject($object): bool
+        {
+            return is_object($object) && property_exists($object, 'id') && (int)$object->id > 0;
         }
     }
 }
@@ -318,6 +330,9 @@ if (!class_exists('Carrier')) {
 if (!class_exists('Address')) {
     class Address
     {
+        public static $fixtures = [];
+
+        public $id;
         public $id_country = 1;
         public $id_state = 1;
         public $city = 'Montreal';
@@ -331,6 +346,17 @@ if (!class_exists('Address')) {
 
         public function __construct($id = null)
         {
+            $this->id = $id;
+            if ($id !== null && isset(self::$fixtures[$id])) {
+                foreach (self::$fixtures[$id] as $key => $value) {
+                    $this->$key = $value;
+                }
+            }
+        }
+
+        public static function mockAddress($id, array $data): void
+        {
+            self::$fixtures[$id] = $data;
         }
     }
 }
@@ -349,19 +375,34 @@ if (!class_exists('Customer')) {
 if (!class_exists('Order')) {
     class Order
     {
+        public static $fixtures = [];
+
         public $id;
         public $id_customer = 1;
         public $id_address_delivery = 1;
+        public $id_currency = 1;
         public $products = [];
 
         public function __construct($id)
         {
             $this->id = $id;
+            if (isset(self::$fixtures[$id])) {
+                $fixture = self::$fixtures[$id];
+                $this->id_customer = $fixture['id_customer'] ?? $this->id_customer;
+                $this->id_address_delivery = $fixture['id_address_delivery'] ?? $this->id_address_delivery;
+                $this->id_currency = $fixture['id_currency'] ?? $this->id_currency;
+                $this->products = $fixture['products'] ?? $this->products;
+            }
         }
 
         public function getProductsDetail(): array
         {
             return $this->products;
+        }
+
+        public static function mockOrder($id, array $data): void
+        {
+            self::$fixtures[$id] = $data;
         }
     }
 }
@@ -510,6 +551,24 @@ if (!class_exists('State')) {
         public static function setIsoById($id, $iso): void
         {
             self::$isoMap[$id] = $iso;
+        }
+    }
+}
+
+if (!class_exists('Currency')) {
+    class Currency
+    {
+        public $id;
+        public $iso_code = 'CAD';
+
+        public function __construct($id = null)
+        {
+            $this->id = $id ?? 1;
+        }
+
+        public static function getIsoCodeById($id)
+        {
+            return 'CAD';
         }
     }
 }

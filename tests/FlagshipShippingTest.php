@@ -50,9 +50,9 @@ class FlagshipShippingProxy extends FlagshipShipping
         return $this->getItemsByQty($product, $order, $items);
     }
 
-    public function publicGetPackages($order = null): array
+    public function publicGetPackages($order = null, $destinationCountryIso = null): array
     {
-        return $this->getPackages($order);
+        return $this->getPackages($order, $destinationCountryIso);
     }
 
     public function publicPrepareRates(RatesCollection $rates): array
@@ -127,6 +127,38 @@ final class FlagshipShippingTest extends TestCase
         Context::getContext()->cookie = new Cookie();
         Context::getContext()->controller = new Controller();
         Context::getContext()->controller->php_self = 'index';
+
+        Address::mockAddress(1, [
+            'id_country' => 1,
+            'id_state' => 1,
+            'city' => 'Vancouver',
+            'postcode' => 'V6B1A1',
+            'address1' => '123 Main',
+            'address2' => 'Suite 100',
+            'phone' => '6045550100',
+            'firstname' => 'Jane',
+            'lastname' => 'Doe',
+            'company' => '',
+        ]);
+
+        Order::mockOrder(1, [
+            'id_customer' => 1,
+            'id_address_delivery' => 1,
+            'products' => [
+                [
+                    'product_quantity' => 1,
+                    'width' => 4,
+                    'height' => 5,
+                    'depth' => 6,
+                    'weight' => 2,
+                    'product_weight' => 2,
+                    'product_name' => 'Default Item',
+                    'unit_price_tax_excl' => 10,
+                    'product_reference' => 'SKU-DEFAULT',
+                    'is_virtual' => false,
+                ],
+            ],
+        ]);
 
         $this->module = new FlagshipShippingProxy();
         PrestaShopLogger::$logs = [];
@@ -400,6 +432,48 @@ final class FlagshipShippingTest extends TestCase
         $this->assertSame('F', $payload['payment']['payer']);
     }
 
+    public function testShipmentPayloadIncludesCustomsInvoiceForUsa(): void
+    {
+        Address::mockAddress(1, [
+            'id_country' => 2,
+            'id_state' => 2,
+            'city' => 'New York',
+            'postcode' => '10001',
+            'address1' => '1 Test St',
+            'address2' => '',
+            'company' => '',
+            'phone' => '5555555555',
+            'firstname' => 'Alice',
+            'lastname' => 'Smith',
+        ]);
+
+        Order::mockOrder(1, [
+            'id_customer' => 1,
+            'id_address_delivery' => 1,
+            'products' => [
+                [
+                    'product_quantity' => 1,
+                    'width' => 4,
+                    'height' => 5,
+                    'depth' => 6,
+                    'weight' => 2,
+                    'product_weight' => 2,
+                    'product_name' => 'Widget A',
+                    'unit_price_tax_excl' => 10,
+                    'product_reference' => 'SKU-A',
+                    'is_virtual' => false,
+                ],
+            ],
+        ]);
+
+        $order = new Order(1);
+        $payload = $this->module->publicGetPayloadForShipment(1);
+
+        $this->assertArrayHasKey('customs_invoice', $payload);
+        $this->assertNotEmpty($payload['customs_invoice']['items']);
+        $this->assertSame('CAD', $payload['customs_invoice']['currency']);
+    }
+
     public function testOriginStateFallsBackToOverrideWhenShopStateMissing(): void
     {
         Configuration::updateValue('PS_SHOP_STATE_ID', 0);
@@ -408,6 +482,37 @@ final class FlagshipShippingTest extends TestCase
         $payload = $this->module->publicBuildCheckoutPayload(new Address());
 
         $this->assertSame('ON', $payload['from']['state']);
+    }
+
+    public function testGetPackagesAggregatesCrossBorderWhenPackingDisabled(): void
+    {
+        Configuration::updateValue('flagship_packing_api', 0);
+
+        Context::getContext()->cart->products = [
+            [
+                'quantity' => 1,
+                'width' => 4,
+                'height' => 5,
+                'depth' => 6,
+                'weight' => 2,
+                'name' => 'Widget A',
+                'is_virtual' => false,
+            ],
+            [
+                'quantity' => 1,
+                'width' => 3,
+                'height' => 4,
+                'depth' => 5,
+                'weight' => 1.5,
+                'name' => 'Widget B',
+                'is_virtual' => false,
+            ],
+        ];
+
+        $packages = $this->module->publicGetPackages(null, 'US');
+
+        $this->assertCount(1, $packages['items']);
+        $this->assertGreaterThan(0, $packages['items'][0]['height']);
     }
 
     public function testQuoteDebugLoggingCanBeToggled(): void
