@@ -365,7 +365,7 @@ final class FlagshipShippingTest extends TestCase
 
         $payload = $this->module->publicBuildCheckoutPayload($address);
 
-        $this->assertSame('QC', $payload['from']['state']);
+        $this->assertSame('BC', $payload['from']['state']);
         $this->assertSame('QC', $payload['to']['state']);
         $this->assertSame(substr('Warehouse Floor 123456789', 0, 17), $payload['to']['suite']);
         $this->assertTrue($payload['to']['is_commercial']);
@@ -386,7 +386,7 @@ final class FlagshipShippingTest extends TestCase
         $payload = $this->module->publicBuildCheckoutPayload($address);
 
         $this->assertSame('CA', $payload['from']['country']);
-        $this->assertSame('QC', $payload['from']['state']);
+        $this->assertSame('BC', $payload['from']['state']);
         $this->assertSame('US', $payload['to']['country']);
         $this->assertSame('NY', $payload['to']['state']);
         $this->assertFalse($payload['to']['is_commercial']);
@@ -398,6 +398,16 @@ final class FlagshipShippingTest extends TestCase
 
         $this->assertArrayHasKey('payment', $payload);
         $this->assertSame('F', $payload['payment']['payer']);
+    }
+
+    public function testOriginStateFallsBackToOverrideWhenShopStateMissing(): void
+    {
+        Configuration::updateValue('PS_SHOP_STATE_ID', 0);
+        Configuration::updateValue('FLAGSHIP_ORIGIN_STATE_ISO', 'ON');
+
+        $payload = $this->module->publicBuildCheckoutPayload(new Address());
+
+        $this->assertSame('ON', $payload['from']['state']);
     }
 
     public function testQuoteDebugLoggingCanBeToggled(): void
@@ -502,26 +512,17 @@ final class FlagshipShippingTest extends TestCase
     }
 
     /**
-     * Debug helper: prints SmartShip rates.
+     * Debug helper: prints SmartShip rates (requires FLAGSHIP_TEST_API_TOKEN).
      *
      * Steps:
-     *   1. Export FLAGSHIP_TEST_API_TOKEN with your SmartShip sandbox token (optional but recommended).
+     *   1. Export FLAGSHIP_TEST_API_TOKEN with your SmartShip sandbox token.
      *   2. (Optional) Export FLAGSHIP_BASE_ENV=test to hit the sandbox.
      *   3. Run `vendor\bin\phpunit --filter testDebugPrintSmartShipRates`.
-     *
-     * When the token is not available (or SmartShip rejects the call), the helper falls back to a canned
-     * response so you can still review the expected output formatting.
      */
-    /*
     public function testDebugPrintSmartShipRates(): void
     {
-        $token = getenv('FLAGSHIP_TEST_API_TOKEN');
-        $useSandbox = getenv('FLAGSHIP_BASE_ENV') === 'test';
-
-        if ($token) {
-            Configuration::updateValue('flagship_api_token', $token);
-            Configuration::updateValue('flagship_test_env', $useSandbox ? 1 : 0);
-        }
+        $token = $this->requireSandboxToken();
+        $this->configureSandboxToken($token);
 
         $address = new Address();
         $address->company = '';
@@ -554,12 +555,6 @@ final class FlagshipShippingTest extends TestCase
         $payload = $this->module->publicBuildCheckoutPayload($address);
         fwrite(STDERR, "SmartShip payload:\n".json_encode($payload, JSON_PRETTY_PRINT)."\n");
 
-        if (!$token) {
-            $this->printSampleRates('FLAGSHIP_TEST_API_TOKEN not set; showing sample response.');
-            $this->assertTrue(true);
-            return;
-        }
-
         $request = new FlagshipDetailedQuoteRequest(
             $token,
             $this->module->getApiBaseUrl(),
@@ -568,17 +563,12 @@ final class FlagshipShippingTest extends TestCase
             _PS_VERSION_
         );
 
-        try {
-            $request->setStoreName('Flagship Test Debug');
-            $rates = $request->executeWithDetails()->sortByPrice();
-            $this->printRateCollection($rates);
-            $this->assertNotEmpty($rates->all());
-        } catch (QuoteException $exception) {
-            $this->printSampleRates('SmartShip request failed: '.$exception->getMessage());
-            $this->assertTrue(true);
-        }
+        $request->setStoreName('Flagship Test Debug');
+        $rates = $request->executeWithDetails()->sortByPrice();
+
+        $this->assertNotEmpty($rates->all(), 'SmartShip returned no carriers.');
+        $this->printRateCollection($rates);
     }
-    */
 
     public function testGetBaseUrlSwitchesToSandbox(): void
     {
@@ -589,10 +579,7 @@ final class FlagshipShippingTest extends TestCase
 
     public function testVerifyTokenAgainstSandboxWhenTokenProvided(): void
     {
-        $token = getenv('FLAGSHIP_TEST_API_TOKEN');
-        if (!$token) {
-            $this->markTestSkipped('FLAGSHIP_TEST_API_TOKEN not set; skipping sandbox verification test.');
-        }
+        $token = $this->requireSandboxToken();
 
         Configuration::updateValue('flagship_api_token', 'previous-token');
 
@@ -604,10 +591,29 @@ final class FlagshipShippingTest extends TestCase
         $this->assertSame($token, Configuration::get('flagship_api_token'));
     }
 
-    protected function printSampleRates(string $reason): void
+    public function testPackingApiPacksRandomItemsAgainstSandbox(): void
     {
-        fwrite(STDERR, $reason.PHP_EOL);
-        $this->printRateCollection($this->createSampleRatesCollection());
+        $token = $this->requireSandboxToken();
+        $this->configureSandboxToken($token);
+        Configuration::updateValue('flagship_packing_api', 1);
+
+        $products = $this->generateRandomCartProducts();
+        Context::getContext()->cart->products = $products;
+        $this->module->mockBoxes = $this->buildBoxesForProducts($products);
+
+        $packages = $this->module->publicGetPackages();
+
+        $this->assertNotEmpty($packages, 'Packing API returned an empty response.');
+        $this->assertArrayHasKey('items', $packages);
+        $this->assertNotEmpty($packages['items'], 'Packing API returned no packed items.');
+        $this->assertSame('imperial', $packages['units']);
+
+        foreach ($packages['items'] as $packedItem) {
+            $this->assertGreaterThan(0, $packedItem['length'], 'Packed length must be positive.');
+            $this->assertGreaterThan(0, $packedItem['width'], 'Packed width must be positive.');
+            $this->assertGreaterThan(0, $packedItem['height'], 'Packed height must be positive.');
+            $this->assertGreaterThan(0, $packedItem['weight'], 'Packed weight must be positive.');
+        }
     }
 
     protected function printRateCollection(RatesCollection $rates): void
@@ -626,45 +632,65 @@ final class FlagshipShippingTest extends TestCase
         }
     }
 
-    protected function createSampleRatesCollection(): RatesCollection
+    private function requireSandboxToken(): string
     {
-        return new RatesCollection([
-            new Rate((object)[
-                'price' => (object)[
-                    'subtotal' => 24.50,
-                    'total' => 26.00,
-                    'taxes' => ['GST' => 1.50],
-                ],
-                'service' => (object)[
-                    'courier_name' => 'FlagShip Economy',
-                    'courier_desc' => 'Ground',
-                    'courier_code' => 'FSECO',
-                ],
-            ]),
-            new Rate((object)[
-                'price' => (object)[
-                    'subtotal' => 34.00,
-                    'total' => 36.50,
-                    'taxes' => ['GST' => 2.50],
-                ],
-                'service' => (object)[
-                    'courier_name' => 'FedEx',
-                    'courier_desc' => 'International Connect Plus',
-                    'courier_code' => 'FXICP',
-                ],
-            ]),
-            new Rate((object)[
-                'price' => (object)[
-                    'subtotal' => 52.00,
-                    'total' => 54.86,
-                    'taxes' => ['GST' => 2.86],
-                ],
-                'service' => (object)[
-                    'courier_name' => 'UPS',
-                    'courier_desc' => 'Express Saver',
-                    'courier_code' => 'UPSEXP',
-                ],
-            ]),
-        ]);
+        $token = getenv('FLAGSHIP_TEST_API_TOKEN');
+        $this->assertNotFalse($token, 'Set FLAGSHIP_TEST_API_TOKEN with your sandbox key before running integration tests.');
+        $token = trim((string)$token);
+        $this->assertNotSame('', $token, 'FLAGSHIP_TEST_API_TOKEN cannot be empty.');
+        return $token;
+    }
+
+    private function configureSandboxToken(string $token): void
+    {
+        $useSandbox = getenv('FLAGSHIP_BASE_ENV') === 'test';
+        Configuration::updateValue('flagship_api_token', $token);
+        Configuration::updateValue('flagship_test_env', $useSandbox ? 1 : 0);
+    }
+
+    private function generateRandomCartProducts(): array
+    {
+        $count = random_int(2, 3);
+        $products = [];
+        for ($i = 1; $i <= $count; $i++) {
+            $products[] = [
+                'quantity' => 1,
+                'width' => random_int(3, 7),
+                'height' => random_int(2, 6),
+                'depth' => random_int(4, 9),
+                'weight' => random_int(1, 5),
+                'name' => 'Random Item '.$i,
+                'is_virtual' => false,
+            ];
+        }
+        return $products;
+    }
+
+    private function buildBoxesForProducts(array $products): array
+    {
+        $maxWidth = max(array_column($products, 'width'));
+        $maxHeight = max(array_column($products, 'height'));
+        $maxLength = max(array_column($products, 'depth'));
+        $totalWeight = array_sum(array_column($products, 'weight'));
+
+        $baseBox = [
+            'box_model' => 'Packing Test Box A '.random_int(1000, 9999),
+            'length' => $maxLength + random_int(3, 6),
+            'width' => $maxWidth + random_int(3, 6),
+            'height' => $maxHeight + random_int(3, 6),
+            'weight' => 1,
+            'max_weight' => $totalWeight + 10,
+        ];
+
+        $spareBox = [
+            'box_model' => 'Packing Test Box B '.random_int(1000, 9999),
+            'length' => $baseBox['length'] + random_int(2, 4),
+            'width' => $baseBox['width'] + random_int(2, 4),
+            'height' => $baseBox['height'] + random_int(2, 4),
+            'weight' => 1,
+            'max_weight' => $totalWeight + 20,
+        ];
+
+        return [$baseBox, $spareBox];
     }
 }

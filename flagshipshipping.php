@@ -50,6 +50,7 @@ class FlagshipShipping extends CarrierModule
     private const CONFIG_DEBUG_PARTIAL_QUOTES = 'FS_DEBUG_PARTIAL_QUOTES';
     private const CONFIG_DEBUG_QUOTE_TRAFFIC = 'FS_DEBUG_RATE_TRAFFIC';
     private const CLEAN_CHECKOUT_OPTION_KEYS = ['signature_required', 'saturday_delivery', 'cod', 'insurance'];
+    private const CONFIG_ORIGIN_STATE_OVERRIDE = 'FLAGSHIP_ORIGIN_STATE_ISO';
 
     public $id_carrier;
     protected $config_form = false;
@@ -142,6 +143,7 @@ class FlagshipShipping extends CarrierModule
         Configuration::deleteByName('flagship_test_env');
         Configuration::deleteByName(self::CONFIG_CLEAN_CHECKOUT_OPTIONS);
         Configuration::deleteByName(self::CONFIG_DEBUG_PARTIAL_QUOTES);
+        Configuration::deleteByName(self::CONFIG_ORIGIN_STATE_OVERRIDE);
         Configuration::deleteByName(self::CONFIG_DEBUG_QUOTE_TRAFFIC);
 
         $query = new DbQuery();
@@ -239,6 +241,26 @@ class FlagshipShipping extends CarrierModule
             'trackingUrl' => empty($shipmentData) ? '' : $this->getTrackingUrl($shipmentData)
         ));
         return $this->display(__FILE__, 'flagship.tpl');
+    }
+
+    public function hookDisplayAdminOrderSide(array $params)
+    {
+        $orderId = isset($params['id_order']) ? (int)$params['id_order'] : (isset($params['order']) ? (int)$params['order']->id : 0);
+        if ($orderId <= 0) {
+            return '';
+        }
+
+        $order = new Order($orderId);
+        if (!Validate::isLoadedObject($order)) {
+            return '';
+        }
+
+        $packageSummary = $this->buildOrderPackageSummary($order);
+        $this->context->smarty->assign([
+            'flagship_package_summary' => $packageSummary,
+        ]);
+
+        return $this->display(__FILE__, 'views/templates/admin/order_packages.tpl');
     }
 
     public function prepareShipment(string $token, int $orderId) : string
@@ -489,7 +511,7 @@ class FlagshipShipping extends CarrierModule
             "suite"=>substr(Configuration::get('PS_SHOP_ADDR2'),0,17),
             "city"=>Configuration::get('PS_SHOP_CITY'),
             "country"=>Country::getIsoById(Configuration::get('PS_SHOP_COUNTRY_ID')),
-            "state"=>$this->getStateCode(Configuration::get('PS_SHOP_STATE_ID')),
+            "state"=>$this->getOriginStateIso(),
             "postal_code"=>Configuration::get('PS_SHOP_CODE'),
             "phone"=> Configuration::get('PS_SHOP_PHONE'),
             "is_commercial"=>true
@@ -705,6 +727,14 @@ class FlagshipShipping extends CarrierModule
                         ]
                     ],
                     [
+                        'col' => 2,
+                        'type' => 'text',
+                        'label' => $this->l('Ship-from state/province override (ISO-2)'),
+                        'desc' => $this->l('Used when your shop state is missing; set to the 2-letter code of your warehouse (e.g. QC, ON, NY).'),
+                        'name' => self::CONFIG_ORIGIN_STATE_OVERRIDE,
+                        'maxlength' => 2,
+                    ],
+                    [
                         'col' => 4,
                         'type' => 'select',
                         'label' => $this->l('Checkout payload debug logging'),
@@ -743,6 +773,10 @@ class FlagshipShipping extends CarrierModule
         $debugFlag = Configuration::get(self::CONFIG_DEBUG_PARTIAL_QUOTES);
         if ($debugFlag === false || $debugFlag === null) {
             Configuration::updateValue(self::CONFIG_DEBUG_PARTIAL_QUOTES, 1);
+        }
+
+        if (Configuration::get(self::CONFIG_ORIGIN_STATE_OVERRIDE) === false) {
+            Configuration::updateValue(self::CONFIG_ORIGIN_STATE_OVERRIDE, 'QC');
         }
 
         $quoteDebug = Configuration::get(self::CONFIG_DEBUG_QUOTE_TRAFFIC);
@@ -821,6 +855,7 @@ class FlagshipShipping extends CarrierModule
             'flagship_email_on_label' => Configuration::get('flagship_email_on_label'),
             'flagship_packing_api' => Configuration::get('flagship_packing_api'),
             'flagship_tracking_email' => Configuration::get('flagship_tracking_email'),
+            self::CONFIG_ORIGIN_STATE_OVERRIDE => Configuration::get(self::CONFIG_ORIGIN_STATE_OVERRIDE),
             self::CONFIG_DEBUG_QUOTE_TRAFFIC => Configuration::get(self::CONFIG_DEBUG_QUOTE_TRAFFIC),
         ];
     }
@@ -844,6 +879,8 @@ class FlagshipShipping extends CarrierModule
         $trackingEmail = empty(Tools::getValue('flagship_tracking_email')) ? 0 : Tools::getValue('flagship_tracking_email');
         $quoteDebug = Tools::getValue(self::CONFIG_DEBUG_QUOTE_TRAFFIC);
         $quoteDebug = $quoteDebug === false || $quoteDebug === null ? Configuration::get(self::CONFIG_DEBUG_QUOTE_TRAFFIC) : $quoteDebug;
+        $originStateOverride = Tools::getValue(self::CONFIG_ORIGIN_STATE_OVERRIDE);
+        $originStateOverride = Tools::substr(Tools::strtoupper(trim((string)$originStateOverride)), 0, 2);
 
         if (is_string(Configuration::get('flagship_fee')) && is_string(Configuration::get('flagship_api_token')) && is_string(Configuration::get('flagship_markup')) ) { //fields exist in db
             $feeFlag = $fee != Configuration::get('flagship_fee') ?
@@ -862,12 +899,14 @@ class FlagshipShipping extends CarrierModule
                                 Configuration::updateValue('flagship_packing_api', $packing) : 0;
             $quoteDebugFlag = $quoteDebug != Configuration::get(self::CONFIG_DEBUG_QUOTE_TRAFFIC) ?
                                 Configuration::updateValue(self::CONFIG_DEBUG_QUOTE_TRAFFIC, $quoteDebug) : 0;
+            $originStateOverrideFlag = $originStateOverride != Configuration::get(self::CONFIG_ORIGIN_STATE_OVERRIDE) ?
+                                Configuration::updateValue(self::CONFIG_ORIGIN_STATE_OVERRIDE, $originStateOverride) : 0;
 
-            return $this->displayConfirmation($this->getReturnMessage($apiToken, $testEnv, $feeFlag, $markupFlag, $residentialFlag,$emailOnLabel, $packing, $quoteDebugFlag));
+            return $this->displayConfirmation($this->getReturnMessage($apiToken, $testEnv, $feeFlag, $markupFlag, $residentialFlag,$emailOnLabel, $packing, $quoteDebugFlag, $originStateOverrideFlag));
 
         }
 
-        if ($this->setApiToken($apiToken, $testEnv) && $this->setMarkup($markup) && $this->setHandlingFee($fee) && $this->setTestEnv($testEnv) && $this->setResidential($residential) && $this->setEmailOnLabel($emailOnLabel) && $this->setQuoteDebug($quoteDebug)) {
+        if ($this->setApiToken($apiToken, $testEnv) && $this->setMarkup($markup) && $this->setHandlingFee($fee) && $this->setTestEnv($testEnv) && $this->setResidential($residential) && $this->setEmailOnLabel($emailOnLabel) && $this->setQuoteDebug($quoteDebug) && $this->setOriginStateOverride($originStateOverride)) {
             $storeName = $this->context->shop->name;
             $url = $this->getBaseUrl();
             $flagship = new Flagship($apiToken, $url, 'Prestashop', _PS_VERSION_);
@@ -879,7 +918,7 @@ class FlagshipShipping extends CarrierModule
         return $this->displayWarning($this->l("Oops! Token is invalid or same token is set."));
     }
 
-    protected function getReturnMessage(string $apiToken, int $testEnv, int $feeFlag, int $markupFlag, int $residentialFlag, int $emailOnLabel, int $packing, int $quoteDebugFlag) : string
+    protected function getReturnMessage(string $apiToken, int $testEnv, int $feeFlag, int $markupFlag, int $residentialFlag, int $emailOnLabel, int $packing, int $quoteDebugFlag, int $originStateOverrideFlag) : string
     {
         $returnMessage = "<b>";
         $validToken = 0;
@@ -896,7 +935,7 @@ class FlagshipShipping extends CarrierModule
             $returnMessage .= "Token not updated! ";
         }
 
-        if($feeFlag || $markupFlag || $residentialFlag || $emailOnLabel || $packing || $quoteDebugFlag){
+        if($feeFlag || $markupFlag || $residentialFlag || $emailOnLabel || $packing || $quoteDebugFlag || $originStateOverrideFlag){
             $returnMessage .= "Settings Updated";
         }
 
@@ -942,6 +981,10 @@ class FlagshipShipping extends CarrierModule
 
     protected function setQuoteDebug(string $quoteDebug) : int {
         return Configuration::updateValue(self::CONFIG_DEBUG_QUOTE_TRAFFIC, $quoteDebug);
+    }
+
+    protected function setOriginStateOverride(string $originStateOverride) : int {
+        return Configuration::updateValue(self::CONFIG_ORIGIN_STATE_OVERRIDE, $originStateOverride);
     }
 
     protected function insertBoxDetails() : string
@@ -1139,19 +1182,36 @@ class FlagshipShipping extends CarrierModule
         return 0;
     }
 
-    protected function getStateCode(int $code) : string
+    protected function getStateCode(?int $code) : string
     {
-        if ($code <= 0) {
+        if ($code === null || $code <= 0) {
             return '';
         }
 
         $isoCode = State::getIsoById($code);
 
-        if ($isoCode === false || $isoCode === null) {
+        if (empty($isoCode)) {
             return '';
         }
 
         return Tools::substr($isoCode, 0, 2);
+    }
+
+    protected function getOriginStateIso() : string
+    {
+        $stateIso = $this->getStateCode((int)Configuration::get('PS_SHOP_STATE_ID'));
+        if ($stateIso !== '') {
+            return $stateIso;
+        }
+
+        $override = Tools::strtoupper(Tools::substr(trim((string)Configuration::get(self::CONFIG_ORIGIN_STATE_OVERRIDE)), 0, 2));
+        if ($override !== '') {
+            return $override;
+        }
+
+        $fallback = 'QC';
+        PrestaShopLogger::addLog('[FlagShip] Shop state/province is not configured. Defaulting to '.$fallback.'. Update the store state or the module override.', 2, null, $this->name);
+        return $fallback;
     }
 
     protected function getPayload(Address $address) : array
@@ -1163,7 +1223,7 @@ class FlagshipShipping extends CarrierModule
             "suite" => $this->formatSuite(Configuration::get('PS_SHOP_ADDR2')),
             "city" => Configuration::get('PS_SHOP_CITY'),
             "country" => Country::getIsoById(Configuration::get('PS_SHOP_COUNTRY_ID')),
-            "state" => $this->getStateCode((int)Configuration::get('PS_SHOP_STATE_ID')),
+            "state" => $this->getOriginStateIso(),
             "postal_code" => Configuration::get('PS_SHOP_CODE'),
             "phone" => Configuration::get('PS_SHOP_PHONE'),
             "is_commercial" => true
@@ -1441,6 +1501,34 @@ class FlagshipShipping extends CarrierModule
             return [];
         }
         
+    }
+
+    protected function buildOrderPackageSummary(Order $order) : array
+    {
+        $packages = $this->getPackages($order);
+
+        if (!is_array($packages) || empty($packages) || !isset($packages['items']) || !is_array($packages['items']) || count($packages['items']) === 0) {
+            return [];
+        }
+
+        $items = [];
+        foreach ($packages['items'] as $index => $item) {
+            $items[] = [
+                'index' => $index + 1,
+                'description' => isset($item['description']) ? Tools::substr($item['description'], 0, 60) : '',
+                'length' => isset($item['length']) ? (float)$item['length'] : 0.0,
+                'width' => isset($item['width']) ? (float)$item['width'] : 0.0,
+                'height' => isset($item['height']) ? (float)$item['height'] : 0.0,
+                'weight' => isset($item['weight']) ? (float)$item['weight'] : 0.0,
+            ];
+        }
+
+        return [
+            'units' => $packages['units'] ?? 'imperial',
+            'type' => $packages['type'] ?? 'package',
+            'content' => $packages['content'] ?? 'goods',
+            'items' => $items,
+        ];
     }
 
     protected function getPackedItems(?\Flagship\Shipping\Collections\PackingCollection $packings = null) : array

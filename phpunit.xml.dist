@@ -13,6 +13,5 @@
         <ini name="error_reporting" value="-1"/>
         <ini name="display_errors" value="1"/>
         <ini name="display_startup_errors" value="1"/>
-        <env name="FLAGSHIP_TEST_API_TOKEN" value="EdDjzYqZahjqvZi5sp7AbidmbyTB-o8iemzi3whVjuk"/>
     </php>
 </phpunit>

@@ -258,6 +258,11 @@ if (!class_exists('Tools')) {
             return strtolower($value);
         }
 
+        public static function strtoupper($value)
+        {
+            return strtoupper($value);
+        }
+
         public static function isSubmit($name)
         {
             return false;
@@ -319,7 +324,7 @@ if (!class_exists('Address')) {
         public $postcode = 'H2B1A0';
         public $address1 = '123 Main';
         public $address2 = 'Suite 100';
-        public $phone = '555-0100';
+        public $phone = '6045550100';
         public $firstname = 'Jane';
         public $lastname = 'Doe';
         public $company = '';
@@ -518,17 +523,18 @@ Configuration::updateValue('flagship_tracking_email', 0);
 Configuration::updateValue('flagship_packing_api', 0);
 Configuration::updateValue('PS_DIMENSION_UNIT', 'in');
 Configuration::updateValue('PS_WEIGHT_UNIT', 'lb');
+Configuration::updateValue('FLAGSHIP_ORIGIN_STATE_ISO', 'BC');
 Configuration::updateValue('FS_DEBUG_RATE_TRAFFIC', 0);
 Configuration::updateValue('FS_CLEAN_CHECKOUT_OPTIONS', 1);
 Configuration::updateValue('FS_DEBUG_PARTIAL_QUOTES', 1);
 Configuration::updateValue('PS_SHOP_NAME', 'Flagship Test Shop');
 Configuration::updateValue('PS_SHOP_ADDR1', '123 Main');
 Configuration::updateValue('PS_SHOP_ADDR2', 'Suite 100');
-Configuration::updateValue('PS_SHOP_CITY', 'Montreal');
+Configuration::updateValue('PS_SHOP_CITY', 'Vancouver');
 Configuration::updateValue('PS_SHOP_COUNTRY_ID', 1);
-Configuration::updateValue('PS_SHOP_STATE_ID', 1);
-Configuration::updateValue('PS_SHOP_CODE', 'H2B1A0');
-Configuration::updateValue('PS_SHOP_PHONE', '555-0100');
+Configuration::updateValue('PS_SHOP_STATE_ID', 0);
+Configuration::updateValue('PS_SHOP_CODE', 'V6B1A1');
+Configuration::updateValue('PS_SHOP_PHONE', '6045550100');
 Configuration::updateValue('PS_SHOP_EMAIL', 'shop@example.com');
 
 require_once __DIR__ . '/../flagshipshipping.php';
