@@ -4,20 +4,93 @@
         "Read more about it at https://getcomposer.org/doc/01-basic-usage.md#installing-dependencies",
         "This file is @generated automatically"
     ],
-    "content-hash": "099400638341cb0449eb17a229acb909",
+    "content-hash": "52209cab86c2dc8d11d5ebc297996adf",
     "packages": [
         {
-            "name": "flagshipcompany/flagship-api-sdk",
-            "version": "v1.1.20",
+            "name": "dvdoug/boxpacker",
+            "version": "3.12.1",
             "source": {
                 "type": "git",
-                "url": "https://github.com/flagshipcompany/flagship-api-sdk.git",
-                "reference": "78dd1fbc4fd48435abf5a2c58f7326fd1db0eca0"
+                "url": "https://github.com/dvdoug/BoxPacker.git",
+                "reference": "04720e946770045b00ea796ba8941240b66cba0b"
             },
             "dist": {
                 "type": "zip",
-                "url": "https://api.github.com/repos/flagshipcompany/flagship-api-sdk/zipball/78dd1fbc4fd48435abf5a2c58f7326fd1db0eca0",
-                "reference": "78dd1fbc4fd48435abf5a2c58f7326fd1db0eca0",
+                "url": "https://api.github.com/repos/dvdoug/BoxPacker/zipball/04720e946770045b00ea796ba8941240b66cba0b",
+                "reference": "04720e946770045b00ea796ba8941240b66cba0b",
+                "shasum": ""
+            },
+            "require": {
+                "ext-json": "*",
+                "php": "^7.4||^8.0",
+                "psr/log": "^1.0||^2.0||^3.0"
+            },
+            "require-dev": {
+                "behat/behat": "^3.13",
+                "dvdoug/behat-code-coverage": "^5.3.1",
+                "friendsofphp/php-cs-fixer": "^3.22.0",
+                "monolog/monolog": "^2.9.1||^3.4",
+                "phpunit/phpunit": "^9.6.10||^10.2"
+            },
+            "type": "library",
+            "autoload": {
+                "psr-4": {
+                    "DVDoug\\BoxPacker\\": [
+                        "src/",
+                        "tests/"
+                    ]
+                }
+            },
+            "notification-url": "https://packagist.org/downloads/",
+            "license": [
+                "MIT"
+            ],
+            "authors": [
+                {
+                    "name": "Doug Wright",
+                    "role": "Developer"
+                }
+            ],
+            "description": "An implementation of the 3D (actually 4D) bin packing/knapsack problem (aka creating parcels by putting items into boxes)",
+            "homepage": "https://boxpacker.io/",
+            "keywords": [
+                "bin packing",
+                "binpacking",
+                "box",
+                "boxes",
+                "boxpacking",
+                "container",
+                "knapsack",
+                "packaging",
+                "packing",
+                "parcel",
+                "parcelpacking",
+                "shipping"
+            ],
+            "support": {
+                "issues": "https://github.com/dvdoug/BoxPacker/issues",
+                "source": "https://github.com/dvdoug/BoxPacker/tree/3.12.1"
+            },
+            "funding": [
+                {
+                    "url": "https://github.com/dvdoug",
+                    "type": "github"
+                }
+            ],
+            "time": "2023-12-02T17:01:46+00:00"
+        },
+        {
+            "name": "flagshipcompany/flagship-api-sdk",
+            "version": "v1.1.23",
+            "source": {
+                "type": "git",
+                "url": "https://github.com/flagshipcompany/flagship-api-sdk.git",
+                "reference": "dded257266089e9babb0fa052ee3aeae3bde66c6"
+            },
+            "dist": {
+                "type": "zip",
+                "url": "https://api.github.com/repos/flagshipcompany/flagship-api-sdk/zipball/dded257266089e9babb0fa052ee3aeae3bde66c6",
+                "reference": "dded257266089e9babb0fa052ee3aeae3bde66c6",
                 "shasum": ""
             },
             "require": {
@@ -45,26 +118,77 @@
             ],
             "support": {
                 "issues": "https://github.com/flagshipcompany/flagship-api-sdk/issues",
-                "source": "https://github.com/flagshipcompany/flagship-api-sdk/tree/v1.1.20"
+                "source": "https://github.com/flagshipcompany/flagship-api-sdk/tree/v1.1.23"
             },
-            "time": "2022-06-10T13:04:15+00:00"
+            "time": "2022-09-07T20:52:41+00:00"
         },
         {
-            "name": "symfony/polyfill-mbstring",
-            "version": "v1.26.0",
+            "name": "psr/log",
+            "version": "1.1.4",
             "source": {
                 "type": "git",
-                "url": "https://github.com/symfony/polyfill-mbstring.git",
-                "reference": "9344f9cb97f3b19424af1a21a3b0e75b0a7d8d7e"
+                "url": "https://github.com/php-fig/log.git",
+                "reference": "d49695b909c3b7628b6289db5479a1c204601f11"
             },
             "dist": {
                 "type": "zip",
-                "url": "https://api.github.com/repos/symfony/polyfill-mbstring/zipball/9344f9cb97f3b19424af1a21a3b0e75b0a7d8d7e",
-                "reference": "9344f9cb97f3b19424af1a21a3b0e75b0a7d8d7e",
+                "url": "https://api.github.com/repos/php-fig/log/zipball/d49695b909c3b7628b6289db5479a1c204601f11",
+                "reference": "d49695b909c3b7628b6289db5479a1c204601f11",
                 "shasum": ""
             },
             "require": {
-                "php": ">=7.1"
+                "php": ">=5.3.0"
+            },
+            "type": "library",
+            "extra": {
+                "branch-alias": {
+                    "dev-master": "1.1.x-dev"
+                }
+            },
+            "autoload": {
+                "psr-4": {
+                    "Psr\\Log\\": "Psr/Log/"
+                }
+            },
+            "notification-url": "https://packagist.org/downloads/",
+            "license": [
+                "MIT"
+            ],
+            "authors": [
+                {
+                    "name": "PHP-FIG",
+                    "homepage": "https://www.php-fig.org/"
+                }
+            ],
+            "description": "Common interface for logging libraries",
+            "homepage": "https://github.com/php-fig/log",
+            "keywords": [
+                "log",
+                "psr",
+                "psr-3"
+            ],
+            "support": {
+                "source": "https://github.com/php-fig/log/tree/1.1.4"
+            },
+            "time": "2021-05-03T11:20:27+00:00"
+        },
+        {
+            "name": "symfony/polyfill-mbstring",
+            "version": "v1.33.0",
+            "source": {
+                "type": "git",
+                "url": "https://github.com/symfony/polyfill-mbstring.git",
+                "reference": "6d857f4d76bd4b343eac26d6b539585d2bc56493"
+            },
+            "dist": {
+                "type": "zip",
+                "url": "https://api.github.com/repos/symfony/polyfill-mbstring/zipball/6d857f4d76bd4b343eac26d6b539585d2bc56493",
+                "reference": "6d857f4d76bd4b343eac26d6b539585d2bc56493",
+                "shasum": ""
+            },
+            "require": {
+                "ext-iconv": "*",
+                "php": ">=7.2"
             },
             "provide": {
                 "ext-mbstring": "*"
@@ -74,12 +198,9 @@
             },
             "type": "library",
             "extra": {
-                "branch-alias": {
-                    "dev-main": "1.26-dev"
-                },
                 "thanks": {
-                    "name": "symfony/polyfill",
-                    "url": "https://github.com/symfony/polyfill"
+                    "url": "https://github.com/symfony/polyfill",
+                    "name": "symfony/polyfill"
                 }
             },
             "autoload": {
@@ -114,7 +235,7 @@
                 "shim"
             ],
             "support": {
-                "source": "https://github.com/symfony/polyfill-mbstring/tree/v1.26.0"
+                "source": "https://github.com/symfony/polyfill-mbstring/tree/v1.33.0"
             },
             "funding": [
                 {
@@ -126,37 +247,38 @@
                     "type": "github"
                 },
                 {
+                    "url": "https://github.com/nicolas-grekas",
+                    "type": "github"
+                },
+                {
                     "url": "https://tidelift.com/funding/github/packagist/symfony/symfony",
                     "type": "tidelift"
                 }
             ],
-            "time": "2022-05-24T11:49:31+00:00"
+            "time": "2024-12-23T08:48:59+00:00"
         },
         {
             "name": "symfony/polyfill-php80",
-            "version": "v1.26.0",
+            "version": "v1.33.0",
             "source": {
                 "type": "git",
                 "url": "https://github.com/symfony/polyfill-php80.git",
-                "reference": "cfa0ae98841b9e461207c13ab093d76b0fa7bace"
+                "reference": "0cc9dd0f17f61d8131e7df6b84bd344899fe2608"
             },
             "dist": {
                 "type": "zip",
-                "url": "https://api.github.com/repos/symfony/polyfill-php80/zipball/cfa0ae98841b9e461207c13ab093d76b0fa7bace",
-                "reference": "cfa0ae98841b9e461207c13ab093d76b0fa7bace",
+                "url": "https://api.github.com/repos/symfony/polyfill-php80/zipball/0cc9dd0f17f61d8131e7df6b84bd344899fe2608",
+                "reference": "0cc9dd0f17f61d8131e7df6b84bd344899fe2608",
                 "shasum": ""
             },
             "require": {
-                "php": ">=7.1"
+                "php": ">=7.2"
             },
             "type": "library",
             "extra": {
-                "branch-alias": {
-                    "dev-main": "1.26-dev"
-                },
                 "thanks": {
-                    "name": "symfony/polyfill",
-                    "url": "https://github.com/symfony/polyfill"
+                    "url": "https://github.com/symfony/polyfill",
+                    "name": "symfony/polyfill"
                 }
             },
             "autoload": {
@@ -197,7 +319,7 @@
                 "shim"
             ],
             "support": {
-                "source": "https://github.com/symfony/polyfill-php80/tree/v1.26.0"
+                "source": "https://github.com/symfony/polyfill-php80/tree/v1.33.0"
             },
             "funding": [
                 {
@@ -209,24 +331,28 @@
                     "type": "github"
                 },
                 {
+                    "url": "https://github.com/nicolas-grekas",
+                    "type": "github"
+                },
+                {
                     "url": "https://tidelift.com/funding/github/packagist/symfony/symfony",
                     "type": "tidelift"
                 }
             ],
-            "time": "2022-05-10T07:21:04+00:00"
+            "time": "2025-01-02T08:10:11+00:00"
         },
         {
             "name": "symfony/var-dumper",
-            "version": "v5.4.9",
+            "version": "v5.4.48",
             "source": {
                 "type": "git",
                 "url": "https://github.com/symfony/var-dumper.git",
-                "reference": "af52239a330fafd192c773795520dc2dd62b5657"
+                "reference": "42f18f170aa86d612c3559cfb3bd11a375df32c8"
             },
             "dist": {
                 "type": "zip",
-                "url": "https://api.github.com/repos/symfony/var-dumper/zipball/af52239a330fafd192c773795520dc2dd62b5657",
-                "reference": "af52239a330fafd192c773795520dc2dd62b5657",
+                "url": "https://api.github.com/repos/symfony/var-dumper/zipball/42f18f170aa86d612c3559cfb3bd11a375df32c8",
+                "reference": "42f18f170aa86d612c3559cfb3bd11a375df32c8",
                 "shasum": ""
             },
             "require": {
@@ -235,12 +361,12 @@
                 "symfony/polyfill-php80": "^1.16"
             },
             "conflict": {
-                "phpunit/phpunit": "<5.4.3",
                 "symfony/console": "<4.4"
             },
             "require-dev": {
                 "ext-iconv": "*",
                 "symfony/console": "^4.4|^5.0|^6.0",
+                "symfony/http-kernel": "^4.4|^5.0|^6.0",
                 "symfony/process": "^4.4|^5.0|^6.0",
                 "symfony/uid": "^5.1|^6.0",
                 "twig/twig": "^2.13|^3.0.4"
@@ -286,7 +412,7 @@
                 "dump"
             ],
             "support": {
-                "source": "https://github.com/symfony/var-dumper/tree/v5.4.9"
+                "source": "https://github.com/symfony/var-dumper/tree/v5.4.48"
             },
             "funding": [
                 {
@@ -302,20 +428,20 @@
                     "type": "tidelift"
                 }
             ],
-            "time": "2022-05-21T10:24:18+00:00"
+            "time": "2024-11-08T15:21:10+00:00"
         },
         {
             "name": "tightenco/collect",
-            "version": "v8.83.15",
+            "version": "v8.83.27",
             "source": {
                 "type": "git",
                 "url": "https://github.com/tighten/collect.git",
-                "reference": "7275c1b5f6bfc539d72bb5984d3b9a89e47e27c9"
+                "reference": "07eed6cf7441c7a69c379fdcb118eec1a1fdd0e6"
             },
             "dist": {
                 "type": "zip",
-                "url": "https://api.github.com/repos/tighten/collect/zipball/7275c1b5f6bfc539d72bb5984d3b9a89e47e27c9",
-                "reference": "7275c1b5f6bfc539d72bb5984d3b9a89e47e27c9",
+                "url": "https://api.github.com/repos/tighten/collect/zipball/07eed6cf7441c7a69c379fdcb118eec1a1fdd0e6",
+                "reference": "07eed6cf7441c7a69c379fdcb118eec1a1fdd0e6",
                 "shasum": ""
             },
             "require": {
@@ -354,18 +480,22 @@
             ],
             "support": {
                 "issues": "https://github.com/tighten/collect/issues",
-                "source": "https://github.com/tighten/collect/tree/v8.83.15"
+                "source": "https://github.com/tighten/collect/tree/v8.83.27"
             },
-            "time": "2022-04-15T20:31:14+00:00"
+            "abandoned": "illuminate/collections",
+            "time": "2023-01-13T18:05:42+00:00"
         }
     ],
     "packages-dev": [],
     "aliases": [],
     "minimum-stability": "stable",
-    "stability-flags": [],
+    "stability-flags": {},
     "prefer-stable": false,
     "prefer-lowest": false,
-    "platform": [],
-    "platform-dev": [],
-    "plugin-api-version": "2.1.0"
+    "platform": {},
+    "platform-dev": {},
+    "platform-overrides": {
+        "php": "7.4.30"
+    },
+    "plugin-api-version": "2.6.0"
 }

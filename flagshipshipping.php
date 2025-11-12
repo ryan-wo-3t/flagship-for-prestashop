@@ -30,9 +30,17 @@ if (!defined('_PS_VERSION_')) {
 if (file_exists(__DIR__ . '/vendor/autoload.php')) {
     include_once __DIR__ . '/vendor/autoload.php';
 }
+if (file_exists(__DIR__ . '/classes/FlagshipPackingBox.php')) {
+    require_once __DIR__ . '/classes/FlagshipPackingBox.php';
+}
+if (file_exists(__DIR__ . '/classes/FlagshipPackingItem.php')) {
+    require_once __DIR__ . '/classes/FlagshipPackingItem.php';
+}
 
+use DVDoug\BoxPacker\NoBoxesAvailableException;
+use DVDoug\BoxPacker\Packer;
+use DVDoug\BoxPacker\PackedBoxList;
 use Flagship\Shipping\Exceptions\GetShipmentByIdException;
-use Flagship\Shipping\Exceptions\PackingException;
 use Flagship\Shipping\Flagship;
 
 //NO Trailing slashes please
@@ -46,12 +54,13 @@ class FlagshipShipping extends CarrierModule
     public $id_carrier;
     protected $config_form = false;
     protected $url;
+    protected $boxPackingWasUsed = false;
 
     public function __construct()
     {
         $this->name = 'flagshipshipping';
         $this->tab = 'shipping_logistics';
-        $this->version = '1.0.26';
+        $this->version = '1.0.261';
         $this->author = 'FlagShip Courier Solutions';
         $this->need_instance = 0;
         $this->url = SMARTSHIP_WEB_URL;
@@ -213,6 +222,18 @@ class FlagshipShipping extends CarrierModule
         $shipmentFlag = is_null($shipmentId) ? 0 : $shipmentId;
         $convertUrl = $this->url."/shipping/$shipmentId/convert";
         $shipmentData = null !== $shipmentId ? $this->getShipment($shipmentId) : [];
+        $packedBoxes = [];
+        $showBoxSizeToggle = (bool) Configuration::get('flagship_show_box_size');
+
+        if ($showBoxSizeToggle && Configuration::get('flagship_packing_api')) {
+            $order = new Order($id_order);
+            $packageData = $this->getPackages($order);
+            if ($this->boxPackingWasUsed && isset($packageData['items'])) {
+                $packedBoxes = $this->formatPackedBoxesForDisplay($packageData['items']);
+            }
+        }
+
+        $showBoxSizes = $showBoxSizeToggle && !empty($packedBoxes);
         $this->context->smarty->assign(array(
             'url' => $convertUrl,
             'shipmentFlag' => $shipmentFlag,
@@ -222,7 +243,9 @@ class FlagshipShipping extends CarrierModule
             'orderId' => $id_order,
             'img_dir' => _PS_IMG_DIR_,
             'trackingNumber' => empty($shipmentData) ? '' : $shipmentData['shipment']->tracking_number,
-            'trackingUrl' => empty($shipmentData) ? '' : $this->getTrackingUrl($shipmentData)
+            'trackingUrl' => empty($shipmentData) ? '' : $this->getTrackingUrl($shipmentData),
+            'packedBoxes' => $packedBoxes,
+            'showBoxSizes' => $showBoxSizes
         ));
         return $this->display(__FILE__, 'flagship.tpl');
     }
@@ -624,6 +647,27 @@ class FlagshipShipping extends CarrierModule
                     [
                         'col' => 4,
                         'type' => 'select',
+                        'label' => $this->l('Show Packed Box Size on Orders'),
+                        'name' => 'flagship_show_box_size',
+                        'desc' =>  $this->l('Toggle the packed box summary visibility on the order page.'),
+                        'options' => [
+                            'query' => [
+                                [
+                                    'key' => 0,
+                                    'name' => 'No'
+                                ],
+                                [
+                                    'key' => 1,
+                                    'name' => 'Yes'
+                                ]
+                            ],
+                            'id' => 'key',
+                            'name' => 'name',
+                        ]
+                    ],
+                    [
+                        'col' => 4,
+                        'type' => 'select',
                         'label' => $this->l('Residential Shipments'),
                         'desc' =>  $this->l('Mark all shipments as residential'),
                         'name' => 'flagship_residential',
@@ -762,6 +806,7 @@ class FlagshipShipping extends CarrierModule
             'flagship_email_on_label' => Configuration::get('flagship_email_on_label'),
             'flagship_packing_api' => Configuration::get('flagship_packing_api'),
             'flagship_tracking_email' => Configuration::get('flagship_tracking_email'),
+            'flagship_show_box_size' => Configuration::get('flagship_show_box_size'),
         ];
     }
 
@@ -782,6 +827,7 @@ class FlagshipShipping extends CarrierModule
         $emailOnLabel = empty(Tools::getValue('flagship_email_on_label')) ? 0 : Tools::getValue('flagship_email_on_label');
         $packing = empty(Tools::getValue('flagship_packing_api')) ? 0 : Tools::getValue('flagship_packing_api');
         $trackingEmail = empty(Tools::getValue('flagship_tracking_email')) ? 0 : Tools::getValue('flagship_tracking_email');
+        $showBoxSize = empty(Tools::getValue('flagship_show_box_size')) ? 0 : Tools::getValue('flagship_show_box_size');
 
         if (is_string(Configuration::get('flagship_fee')) && is_string(Configuration::get('flagship_api_token')) && is_string(Configuration::get('flagship_markup')) ) { //fields exist in db
             $feeFlag = $fee != Configuration::get('flagship_fee') ?
@@ -798,8 +844,10 @@ class FlagshipShipping extends CarrierModule
                                 Configuration::updateValue('flagship_tracking_email', $trackingEmail) : 0;
             $packing = $packing != Configuration::get('flagship_packing_api') ?
                                 Configuration::updateValue('flagship_packing_api', $packing) : 0;
+            $showBoxSize = $showBoxSize != Configuration::get('flagship_show_box_size') ?
+                                Configuration::updateValue('flagship_show_box_size', $showBoxSize) : 0;
 
-            return $this->displayConfirmation($this->getReturnMessage($apiToken, $testEnv, $feeFlag, $markupFlag, $residentialFlag,$emailOnLabel, $packing));
+            return $this->displayConfirmation($this->getReturnMessage($apiToken, $testEnv, $feeFlag, $markupFlag, $residentialFlag,$emailOnLabel, $packing, $showBoxSize));
 
         }
 
@@ -815,7 +863,7 @@ class FlagshipShipping extends CarrierModule
         return $this->displayWarning($this->l("Oops! Token is invalid or same token is set."));
     }
 
-    protected function getReturnMessage(string $apiToken, int $testEnv, int $feeFlag, int $markupFlag, int $residentialFlag, int $emailOnLabel, int $packing) : string
+    protected function getReturnMessage(string $apiToken, int $testEnv, int $feeFlag, int $markupFlag, int $residentialFlag, int $emailOnLabel, int $packing, int $showBoxSize) : string
     {
         $returnMessage = "<b>";
         $validToken = 0;
@@ -832,7 +880,7 @@ class FlagshipShipping extends CarrierModule
             $returnMessage .= "Token not updated! ";
         }
 
-        if($feeFlag || $markupFlag || $residentialFlag || $emailOnLabel || $packing){
+        if($feeFlag || $markupFlag || $residentialFlag || $emailOnLabel || $packing || $showBoxSize){
             $returnMessage .= "Settings Updated";
         }
 
@@ -1140,30 +1188,25 @@ class FlagshipShipping extends CarrierModule
     protected function getPackages($order = null) : array
     {
         $products = is_null($order) ? Context::getContext()->cart->getProducts() : $order->getProductsDetail();
-        $packages = [];
         $items = [];
-
         $boxes = $this->getBoxes();
+        $this->boxPackingWasUsed = false;
 
         foreach ($products as $product) {
-            if($product['is_virtual']) continue;
+            if ($product['is_virtual']) {
+                continue;
+            }
             $items = $this->getItemsByQty($product, $order, $items);
         }
 
-        if(!Configuration::get('flagship_packing_api') || count($boxes) == 0){ //use items as they are if boxes are not set
-            $temp = $items;
-
-            return [
-                'items' => $temp,
-                "units" => "imperial",
-                "type"  => "package",
-                "content" => "goods"
-            ];
+        if (count($items) == 0) {
+            return $this->buildPackageStructure($items);
         }
 
-        $token = Configuration::get('flagship_api_token');
-        $url = $this->getBaseUrl();
-        $flagship = new Flagship($token, $url, 'Prestashop', _PS_VERSION_);
+        if (!Configuration::get('flagship_packing_api') || count($boxes) == 0) {
+            return $this->buildPackageStructure($items);
+        }
+
         $packingPayload = [
             'items' => $items,
             'boxes' => $boxes,
@@ -1171,20 +1214,21 @@ class FlagshipShipping extends CarrierModule
         ];
 
         try{
-            $this->logger->logDebug("Packing payload: ".json_encode($packingPayload));
-            $packings = $flagship->packingRequest($packingPayload)->execute();
-            $this->logger->logDebug("Packing response: ".json_encode($packings));
-            $packedItems = $this->getPackedItems($packings);
+            $this->logger->logDebug("Packing payload (BoxPacker): ".json_encode($packingPayload));
+            $packedItems = $this->packItemsWithBoxPacker($items, $boxes);
+            $this->logger->logDebug("Packing response (BoxPacker): ".json_encode($packedItems));
 
-            $packages = [
-                "items" => $packedItems,
-                "units" => "imperial",
-                "type"  => "package",
-                "content" => "goods"
-            ];
+            if (count($packedItems) === 0) {
+                return $this->buildPackageStructure($items);
+            }
 
-            return $packages;
-        } catch (PackingException $e) {
+            $this->boxPackingWasUsed = true;
+            return $this->buildPackageStructure($packedItems);
+        } catch (NoBoxesAvailableException $e) {
+            $this->logger->logError("Error packing items: ".$e->getMessage());
+            Cache::store('packagesCount', 0);
+            return [];
+        } catch (Exception $e) {
             $this->logger->logError("Error packing items: ".$e->getMessage());
             Cache::store('packagesCount', 0);
             return [];
@@ -1192,25 +1236,65 @@ class FlagshipShipping extends CarrierModule
         
     }
 
-    protected function getPackedItems(\Flagship\Shipping\Collections\PackingCollection $packings) : array
+    protected function buildPackageStructure(array $items) : array
     {
-        if ($packings == null) {
-            return [
-                'length' => 1,
-                'width' => 1,
-                'height' => 1,
-                'weight' => 1,
-                'description' => 'packed items'
-            ];
+        return [
+            'items' => $items,
+            "units" => "imperial",
+            "type"  => "package",
+            "content" => "goods"
+        ];
+    }
+
+    protected function packItemsWithBoxPacker(array $items, array $boxes) : array
+    {
+        $packer = new Packer();
+
+        foreach ($boxes as $box) {
+            $packer->addBox(
+                new FlagshipPackingBox(
+                    $box['box_model'],
+                    $this->convertInchesToMillimetres((float)$box['width']),
+                    $this->convertInchesToMillimetres((float)$box['length']),
+                    $this->convertInchesToMillimetres((float)$box['height']),
+                    $this->convertPoundsToGrams((float)$box['weight']),
+                    $this->convertPoundsToGrams((float)$box['max_weight'])
+                )
+            );
         }
 
+        foreach ($items as $index => $item) {
+            $description = array_key_exists('description', $item) ? $item['description'] : 'Item #'.($index + 1);
+            $packer->addItem(
+                new FlagshipPackingItem(
+                    $description,
+                    $this->convertInchesToMillimetres((float)$item['width']),
+                    $this->convertInchesToMillimetres((float)$item['length']),
+                    $this->convertInchesToMillimetres((float)$item['height']),
+                    $this->convertPoundsToGrams((float)$item['weight'])
+                )
+            );
+        }
+
+        $packedBoxes = $packer->pack();
+
+        return $this->getPackedItems($packedBoxes);
+    }
+
+    protected function getPackedItems(PackedBoxList $packings) : array
+    {
+        if ($packings == null || $packings->count() === 0) {
+            return [];
+        }
+
+        $packedItems = [];
         foreach ($packings as $packing) {
             $packedItems[] = [
-                'length' => $packing->getLength(),
-                'width' => $packing->getWidth(),
-                'height' => $packing->getHeight(),
-                'weight' => max($packing->getWeight(),1),
-                'description' => $packing->getBoxModel()
+                'length' => $this->convertMillimetresToInches($packing->getBox()->getOuterLength()),
+                'width' => $this->convertMillimetresToInches($packing->getBox()->getOuterWidth()),
+                'height' => $this->convertMillimetresToInches($packing->getBox()->getOuterDepth()),
+                'weight' => $this->convertGramsToPounds($packing->getWeight()),
+                'description' => $packing->getBox()->getReference()
             ];
         }
 
@@ -1256,6 +1340,26 @@ class FlagshipShipping extends CarrierModule
             $weight = max(ceil($weight),1);
         }
         return $weight;
+    }
+
+    protected function convertInchesToMillimetres(float $value) : int
+    {
+        return max(1, (int)ceil($value * 25.4));
+    }
+
+    protected function convertMillimetresToInches(int $value) : int
+    {
+        return max(1, (int)ceil($value / 25.4));
+    }
+
+    protected function convertPoundsToGrams(float $value) : int
+    {
+        return max(1, (int)ceil($value * 453.592));
+    }
+
+    protected function convertGramsToPounds(int $value) : int
+    {
+        return max(1, (int)ceil($value / 453.592));
     }
 
     protected function updateOrder(int $shipmentId, int $orderId) : bool
@@ -1314,6 +1418,26 @@ class FlagshipShipping extends CarrierModule
                 break;
         }
         return $url;
+    }
+
+    protected function formatPackedBoxesForDisplay(array $packedItems) : array
+    {
+        $formatted = [];
+        foreach ($packedItems as $index => $packedItem) {
+            if (!isset($packedItem['length'], $packedItem['width'], $packedItem['height'], $packedItem['weight'])) {
+                continue;
+            }
+
+            $formatted[] = [
+                'label' => empty($packedItem['description']) ? sprintf($this->l('Box %s'), $index + 1) : $packedItem['description'],
+                'length' => (int)$packedItem['length'],
+                'width' => (int)$packedItem['width'],
+                'height' => (int)$packedItem['height'],
+                'weight' => (int)$packedItem['weight'],
+            ];
+        }
+
+        return $formatted;
     }
 
 }

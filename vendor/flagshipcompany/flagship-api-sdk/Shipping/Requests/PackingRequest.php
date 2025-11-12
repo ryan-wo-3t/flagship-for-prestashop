@@ -11,7 +11,7 @@ class PackingRequest extends ApiRequest{
     protected $responseCode;
     public function __construct(string $baseUrl,string $token, array $payload, string $flagshipFor, string $version){
         $this->token = $token;
-        $this->url = $baseUrl.'/ship/packing';
+        $this->url = $baseUrl.'/v2/ship/packing';
         $this->payload = $payload;
         $this->flagshipFor = $flagshipFor;
         $this->version = $version;

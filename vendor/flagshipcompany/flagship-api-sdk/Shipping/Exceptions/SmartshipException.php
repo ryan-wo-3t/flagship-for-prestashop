@@ -6,7 +6,6 @@ class SmartshipException extends \Exception{
     protected function getErrors() : array {
 
         if(empty($this->message)){
-
             $this->message = 'Unable to connect to FlagShip - Code : '. $this->getCode();
             $errorsArray = [ $this->message ];
             return $errorsArray;
@@ -25,6 +24,7 @@ class SmartshipException extends \Exception{
         }
 
         $errors = json_decode($this->message,TRUE)["errors"];
+        $notices = json_decode($this->message,TRUE)["notices"];
 
         if(is_null($errors)){
             $errorsArray = [ $this->message ];
@@ -43,6 +43,7 @@ class SmartshipException extends \Exception{
 
         if(count($errors) === 1){
             $errorsArray[] = $this->normalizeErrors($errors);
+            $errorsArray[] = $notices!= NULL ? $this->normalizeNotices($notices) : '';
             return $errorsArray;
         }
 
@@ -51,10 +52,10 @@ class SmartshipException extends \Exception{
         $keys = array_keys($errors);
 
         foreach($errors as $error){
-
-            $errorsArray[] = $keys[$i]." : ".$this->normalizeErrors($error);
+            $errorsArray[] = strtoupper($keys[$i])." : ".$this->normalizeErrors($error);
             $i++;
         }
+        $errorsArray[] = $notices != NULl ? $this->normalizeNotices($notices) : '';
         return $errorsArray;
 
     }
@@ -65,11 +66,11 @@ class SmartshipException extends \Exception{
 
     protected function normalizeErrors(array $error) : string {
         $errorMsg = '';
-        while(!is_string($error)){
+        while(!is_string($error) && $error != NULL){ 
             $errorMsg .= is_string(key($error)) ? key($error)." : " : "";
             $error = reset($error);
         }
-        $errorMsg .= $error;
+        $errorMsg .= $error != NULL ? $error : 'Returned a NULL error';
         return $errorMsg;
     }
 
@@ -109,6 +110,14 @@ class SmartshipException extends \Exception{
         if($this->code === 404){
             return ['Requested shipment not found'];
         }
+    }
+
+    protected function normalizeNotices($notices) : string {
+        $errorMsg = '';
+        foreach ($notices as $notice) {
+            $errorMsg .= is_string($notice) ? $notice."\n" : '';
+        }
+        return $errorMsg;
     }
 
 }

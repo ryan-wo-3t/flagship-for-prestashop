@@ -25,6 +25,14 @@ class ComposerStaticInitcf954dcf915cdff53c356b54d6c6a661
             'Symfony\\Polyfill\\Mbstring\\' => 26,
             'Symfony\\Component\\VarDumper\\' => 28,
         ),
+        'P' => 
+        array (
+            'Psr\\Log\\' => 8,
+        ),
+        'D' => 
+        array (
+            'DVDoug\\BoxPacker\\' => 17,
+        ),
     );
 
     public static $prefixDirsPsr4 = array (
@@ -43,6 +51,15 @@ class ComposerStaticInitcf954dcf915cdff53c356b54d6c6a661
         'Symfony\\Component\\VarDumper\\' => 
         array (
             0 => __DIR__ . '/..' . '/symfony/var-dumper',
+        ),
+        'Psr\\Log\\' => 
+        array (
+            0 => __DIR__ . '/..' . '/psr/log/Psr/Log',
+        ),
+        'DVDoug\\BoxPacker\\' => 
+        array (
+            0 => __DIR__ . '/..' . '/dvdoug/boxpacker/src',
+            1 => __DIR__ . '/..' . '/dvdoug/boxpacker/tests',
         ),
     );
 

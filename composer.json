@@ -9,10 +9,14 @@
         }
     ],
     "require": {
-        "flagshipcompany/flagship-api-sdk": "^1.1"
+        "flagshipcompany/flagship-api-sdk": "^1.1",
+        "dvdoug/boxpacker": "^3.12"
     },
     "type" : "prestashop-module",
-	"config": {
+    "config": {
+        "platform": {
+            "php": "7.4.30"
+        },
         "prepend-autoloader": false
     }
 }

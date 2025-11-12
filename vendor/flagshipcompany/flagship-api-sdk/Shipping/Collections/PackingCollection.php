@@ -8,7 +8,7 @@ use Illuminate\Support\Collection;
 class PackingCollection extends Collection{
     public function importPackages(array $packages) : array {
         if(count($packages) === 0){
-            throw new QuoteException('No packages available');
+            throw new PackingException('No packages available');
         }
 
         foreach ($packages as $key => $value) {
