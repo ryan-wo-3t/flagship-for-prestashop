@@ -501,6 +501,6 @@
             "install-path": "../tightenco/collect"
         }
     ],
-    "dev": true,
+    "dev": false,
     "dev-package-names": []
 }

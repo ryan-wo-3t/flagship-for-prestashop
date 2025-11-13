@@ -3,11 +3,11 @@
         'name' => 'flagshipcompany/flagship-for-prestashop',
         'pretty_version' => 'dev-master',
         'version' => 'dev-master',
-        'reference' => 'a8fd2f07443f34d3702709a31e1b872438de6ff0',
+        'reference' => '3bd1a54ce45207c44962b1267c772799252472fd',
         'type' => 'prestashop-module',
         'install_path' => __DIR__ . '/../../',
         'aliases' => array(),
-        'dev' => true,
+        'dev' => false,
     ),
     'versions' => array(
         'dvdoug/boxpacker' => array(
@@ -31,7 +31,7 @@
         'flagshipcompany/flagship-for-prestashop' => array(
             'pretty_version' => 'dev-master',
             'version' => 'dev-master',
-            'reference' => 'a8fd2f07443f34d3702709a31e1b872438de6ff0',
+            'reference' => '3bd1a54ce45207c44962b1267c772799252472fd',
             'type' => 'prestashop-module',
             'install_path' => __DIR__ . '/../../',
             'aliases' => array(),
