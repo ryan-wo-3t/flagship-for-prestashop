@@ -302,7 +302,7 @@ class FlagshipShipping extends CarrierModule
             $isDeletedShipment = !$isNewShipment && empty($shipmentData);
         }
         if ($shipmentFlag) {
-            $convertUrl = $this->url."/shipping/$shipmentFlag/convert";
+            $convertUrl = $this->url."/shipping/$shipmentFlag/overview";
         }
         $packedBoxes = [];
         $showBoxSizeToggle = (bool) Configuration::get('flagship_show_box_size');
