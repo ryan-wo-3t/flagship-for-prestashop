@@ -61,7 +61,7 @@ class FlagshipShipping extends CarrierModule
     {
         $this->name = 'flagshipshipping';
         $this->tab = 'shipping_logistics';
-        $this->version = '1.0.265';
+        $this->version = '1.0.266';
         $this->author = 'FlagShip Courier Solutions';
         $this->need_instance = 0;
         $this->url = SMARTSHIP_WEB_URL;
@@ -269,8 +269,10 @@ class FlagshipShipping extends CarrierModule
         $this->url = Configuration::get('flagship_test_env') ? SMARTSHIP_TEST_WEB_URL : SMARTSHIP_WEB_URL;
         $shipmentId = $this->getShipmentId($id_order);
         $shipmentFlag = is_null($shipmentId) ? 0 : $shipmentId;
-        $convertUrl = $this->url."/shipping/$shipmentId/convert";
-        $shipmentData = null !== $shipmentId ? $this->getShipment($shipmentId) : [];
+        $convertUrl = $shipmentFlag ? $this->url."/shipping/$shipmentId/convert" : '';
+        $isNewShipment = is_null($shipmentId);
+        $shipmentData = $isNewShipment ? [] : $this->getShipment($shipmentId);
+        $isDeletedShipment = !$isNewShipment && empty($shipmentData);
         $packedBoxes = [];
         $showBoxSizeToggle = (bool) Configuration::get('flagship_show_box_size');
         $showPackingLayersToggle = (bool) Configuration::get('flagship_show_packing_layers');
@@ -288,8 +290,8 @@ class FlagshipShipping extends CarrierModule
         $this->context->smarty->assign(array(
             'url' => $convertUrl,
             'shipmentFlag' => $shipmentFlag,
-            'isDeleted' => null === $shipmentData ? true : false,
-            'isNew' => count($shipmentData) == 0 ? true : false,
+            'isDeleted' => $isDeletedShipment,
+            'isNew' => $isNewShipment,
             'SMARTSHIP_WEB_URL' => $this->url,
             'orderId' => $id_order,
             'img_dir' => _PS_IMG_DIR_,
