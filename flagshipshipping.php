@@ -61,7 +61,7 @@ class FlagshipShipping extends CarrierModule
     {
         $this->name = 'flagshipshipping';
         $this->tab = 'shipping_logistics';
-        $this->version = '1.0.263';
+        $this->version = '1.0.264';
         $this->author = 'FlagShip Courier Solutions';
         $this->need_instance = 0;
         $this->url = SMARTSHIP_WEB_URL;
@@ -291,7 +291,8 @@ class FlagshipShipping extends CarrierModule
             'trackingNumber' => empty($shipmentData) ? '' : $shipmentData['shipment']->tracking_number,
             'trackingUrl' => empty($shipmentData) ? '' : $this->getTrackingUrl($shipmentData),
             'packedBoxes' => $packedBoxes,
-            'showBoxSizes' => $showBoxSizes
+            'showBoxSizes' => $showBoxSizes,
+            'showPackingDetails' => $showBoxSizes
         ));
 
         return $this->display(__FILE__, 'flagship.tpl');
