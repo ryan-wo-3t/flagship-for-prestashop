@@ -1057,11 +1057,33 @@ class FlagshipShipping extends CarrierModule
     protected function processTrackingLinksForm() : string
     {
         $submittedTrackingUrls = [];
+        $errors = [];
         foreach ($this->getTrackingUrlDefaults() as $carrier => $defaultUrl) {
             $fieldName = 'flagship_tracking_url_'.$carrier;
-            $value = (string)Tools::getValue($fieldName, '');
-            $template = $this->sanitizeTrackingTemplate($value, $defaultUrl);
-            $submittedTrackingUrls[$carrier] = $template;
+            $value = trim((string)Tools::getValue($fieldName, ''));
+            if ($value === '') {
+                $submittedTrackingUrls[$carrier] = $defaultUrl;
+                continue;
+            }
+
+            $validationError = $this->validateTrackingTemplate($value);
+            if ($validationError !== null) {
+                $errors[] = sprintf(
+                    $this->l('%s tracking URL %s'),
+                    $this->getCarrierDisplayName($carrier),
+                    $validationError
+                );
+                continue;
+            }
+
+            $submittedTrackingUrls[$carrier] = $value;
+        }
+
+        if (!empty($errors)) {
+            return $this->displayError(implode('<br>', $errors));
+        }
+
+        foreach ($submittedTrackingUrls as $carrier => $template) {
             Configuration::updateValue('flagship_tracking_url_'.$carrier, $template);
         }
 
@@ -1833,6 +1855,39 @@ class FlagshipShipping extends CarrierModule
             $template .= self::TRACKING_PLACEHOLDER;
         }
         return $template;
+    }
+
+    protected function validateTrackingTemplate(string $template) : ?string
+    {
+        $template = trim($template);
+        $placeholderCount = substr_count($template, self::TRACKING_PLACEHOLDER);
+        if ($placeholderCount === 0) {
+            return $this->l('must include the @ placeholder to mark the tracking number.');
+        }
+        if ($placeholderCount > 1) {
+            return $this->l('may only include one @ placeholder.');
+        }
+
+        $validationUrl = str_replace(self::TRACKING_PLACEHOLDER, 'TRACKINGNUMBER', $template);
+        if (!$this->isTrackingUrlFormatValid($validationUrl)) {
+            return $this->l('must be a valid URL that begins with http or https.');
+        }
+
+        return null;
+    }
+
+    protected function isTrackingUrlFormatValid(string $url) : bool
+    {
+        if (filter_var($url, FILTER_VALIDATE_URL) === false) {
+            return false;
+        }
+
+        $scheme = parse_url($url, PHP_URL_SCHEME);
+        if ($scheme === false || $scheme === null) {
+            return false;
+        }
+
+        return in_array(Tools::strtolower($scheme), ['http', 'https'], true);
     }
 
     protected function getTrackingUrlConfig() : array
