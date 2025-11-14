@@ -290,7 +290,17 @@ class FlagshipShipping extends CarrierModule
         $convertUrl = $shipmentFlag ? $this->url."/shipping/$shipmentId/convert" : '';
         $isNewShipment = is_null($shipmentId);
         $shipmentData = $isNewShipment ? [] : $this->getShipment($shipmentId);
-        $isDeletedShipment = !$isNewShipment && empty($shipmentData);
+        if (empty($shipmentData) && $trackingIsFlagship) {
+            $shipmentData = ['shipment' => $trackingShipment->shipment];
+            $isNewShipment = false;
+            $isDeletedShipment = false;
+            if ($shipmentFlag != $trackingShipment->shipment->id) {
+                $shipmentFlag = (int)$trackingShipment->shipment->id;
+                $this->updateOrder($shipmentFlag, $id_order);
+            }
+        } else {
+            $isDeletedShipment = !$isNewShipment && empty($shipmentData);
+        }
         $packedBoxes = [];
         $showBoxSizeToggle = (bool) Configuration::get('flagship_show_box_size');
         $showPackingLayersToggle = (bool) Configuration::get('flagship_show_packing_layers');
