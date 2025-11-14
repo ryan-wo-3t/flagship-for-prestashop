@@ -49,26 +49,25 @@
 		<a class="btn btn-default send_to_flagship" id="update_shipment">Update Shipment</a>
 		<a class="btn btn-default convert" id="convert_shipment" href="{$url|escape:'htmlall':'UTF-8'}" target="_blank">Convert Shipment</a>
 		{/if}
-	{else}
-		
 	{/if}
 	</div>
-	{if $showBoxSizes}
-	<div class="flagship-packed-boxes">
-		<p><strong>{l s='Selected box sizes' mod='flagshipshipping'}</strong></p>
-		<ul class="list-unstyled">
-			{foreach from=$packedBoxes item=box}
-				<li>
-					{$box.label|escape:'htmlall':'UTF-8'} - {$box.length|escape:'htmlall':'UTF-8'} x {$box.width|escape:'htmlall':'UTF-8'} x {$box.height|escape:'htmlall':'UTF-8'} {l s='in' mod='flagshipshipping'} ({$box.weight|escape:'htmlall':'UTF-8'} {l s='lb' mod='flagshipshipping'})
-				</li>
-			{/foreach}
-		</ul>
-	</div>
-	{/if}
-	<div class="response"><img src="{$base_url|escape:'htmlall':'UTF-8'}img/loader.gif" alt="Loading..." id="loading-image"/>
-	</div>
-
 {/if}
+
+{if $showBoxSizes}
+<div class="flagship-packed-boxes">
+	<p><strong>{l s='Selected box sizes' mod='flagshipshipping'}</strong></p>
+	<ul class="list-unstyled">
+		{foreach from=$packedBoxes item=box}
+			<li>
+				{$box.label|escape:'htmlall':'UTF-8'} - {$box.length|escape:'htmlall':'UTF-8'} x {$box.width|escape:'htmlall':'UTF-8'} x {$box.height|escape:'htmlall':'UTF-8'} {l s='in' mod='flagshipshipping'} ({$box.weight|escape:'htmlall':'UTF-8'} {l s='lb' mod='flagshipshipping'})
+			</li>
+		{/foreach}
+	</ul>
+</div>
+{/if}
+
+<div class="response"><img src="{$base_url|escape:'htmlall':'UTF-8'}img/loader.gif" alt="Loading..." id="loading-image"/>
+</div>
 <script>
 
 	var url = "{$module_dir|escape:'htmlall':'UTF-8'}shipping.php";

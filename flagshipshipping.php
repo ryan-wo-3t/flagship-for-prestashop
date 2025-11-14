@@ -55,6 +55,7 @@ class FlagshipShipping extends CarrierModule
     protected $config_form = false;
     protected $url;
     protected $boxPackingWasUsed = false;
+    protected $orderBlockRendered = false;
 
     public function __construct()
     {
@@ -257,9 +258,10 @@ class FlagshipShipping extends CarrierModule
 
     protected function renderAdminOrderBlock(int $id_order) : string
     {
-        if ($id_order <= 0) {
+        if ($this->orderBlockRendered || $id_order <= 0) {
             return '';
         }
+        $this->orderBlockRendered = true;
 
         $this->url = Configuration::get('flagship_test_env') ? SMARTSHIP_TEST_WEB_URL : SMARTSHIP_WEB_URL;
         $shipmentId = $this->getShipmentId($id_order);
