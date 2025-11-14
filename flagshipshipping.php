@@ -1421,12 +1421,15 @@ class FlagshipShipping extends CarrierModule
 
         $packedItems = [];
         foreach ($packings as $packing) {
+            $layerSummary = $this->buildLayerSummary($packing);
             $packedItems[] = [
                 'length' => $this->convertMillimetresToInches($packing->getBox()->getOuterLength()),
                 'width' => $this->convertMillimetresToInches($packing->getBox()->getOuterWidth()),
                 'height' => $this->convertMillimetresToInches($packing->getBox()->getOuterDepth()),
                 'weight' => $this->convertGramsToPounds($packing->getWeight()),
-                'description' => $packing->getBox()->getReference()
+                'description' => $packing->getBox()->getReference(),
+                'packing_method' => empty($layerSummary) ? '' : $this->l('Layered packing order'),
+                'layers' => $layerSummary
             ];
         }
 
@@ -1605,10 +1608,48 @@ class FlagshipShipping extends CarrierModule
                 'width' => (int)$packedItem['width'],
                 'height' => (int)$packedItem['height'],
                 'weight' => (int)$packedItem['weight'],
+                'packing_method' => $packedItem['packing_method'] ?? '',
+                'layers' => $packedItem['layers'] ?? []
             ];
         }
 
         return $formatted;
+    }
+
+    protected function buildLayerSummary(\DVDoug\BoxPacker\PackedBox $packedBox) : array
+    {
+        $layers = [];
+        foreach ($packedBox->getItems() as $packedItem) {
+            $layerStart = (int)$packedItem->getZ();
+            if (!isset($layers[$layerStart])) {
+                $layers[$layerStart] = [
+                    'start_mm' => $layerStart,
+                    'items' => []
+                ];
+            }
+            $itemDescription = method_exists($packedItem->getItem(), 'getDescription') ?
+                $packedItem->getItem()->getDescription() :
+                $this->l('Item');
+            $layers[$layerStart]['items'][] = $itemDescription;
+        }
+
+        if (empty($layers)) {
+            return [];
+        }
+
+        ksort($layers);
+        $summary = [];
+        $layerNumber = 1;
+        foreach ($layers as $layer) {
+            $summary[] = [
+                'title' => sprintf($this->l('Layer %d'), $layerNumber++),
+                'start_mm' => $layer['start_mm'],
+                'start_in' => $this->convertMillimetresToInches($layer['start_mm']),
+                'items' => $layer['items']
+            ];
+        }
+
+        return $summary;
     }
 
 }
