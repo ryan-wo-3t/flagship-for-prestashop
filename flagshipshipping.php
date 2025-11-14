@@ -284,6 +284,7 @@ class FlagshipShipping extends CarrierModule
         $trackingShipmentLink = $trackingIsFlagship ? $this->getFlagshipShipmentDashboardUrl((int)$trackingShipment->shipment->id) : '';
         $trackingCarrierLink = $trackingIsFlagship ? $this->getTrackingUrl(['shipment' => $trackingShipment->shipment]) : '';
         $trackingCourierName = $trackingIsFlagship ? $trackingShipment->shipment->service->courier_name : '';
+        $trackingCourierDisplayName = $trackingCourierName ? $this->getCarrierDisplayName($trackingCourierName) : '';
 
         $shipmentId = $this->getShipmentId($id_order);
         $shipmentFlag = is_null($shipmentId) ? 0 : $shipmentId;
@@ -334,7 +335,7 @@ class FlagshipShipping extends CarrierModule
             'showPackingDetails' => $showPackingDetails,
             'orderTrackingNumber' => $orderTrackingNumber,
             'trackingIsFlagship' => $trackingIsFlagship,
-            'trackingCourierName' => $trackingCourierName,
+            'trackingCourierName' => $trackingCourierDisplayName,
             'trackingShipmentLink' => $trackingShipmentLink,
             'trackingCarrierLink' => $trackingCarrierLink,
             'canModifyShipment' => $canModifyShipment
@@ -1874,6 +1875,25 @@ class FlagshipShipping extends CarrierModule
             }
         }
         return null;
+    }
+
+    protected function getCarrierDisplayName(string $name) : string
+    {
+        $key = $this->detectCarrierKeyFromName($name);
+        if (!$key) {
+            return Tools::ucwords($name);
+        }
+        $labels = [
+            'purolator' => 'Purolator',
+            'ups' => 'UPS',
+            'gls' => 'GLS',
+            'dhl' => 'DHL',
+            'fedex' => 'FedEx',
+            'canpar' => 'CanPar',
+            'nationex' => 'Nationex',
+            'canadapost' => 'Canada Post',
+        ];
+        return $labels[$key] ?? Tools::ucwords($name);
     }
 
     protected function updateCarrierTrackingTemplates(array $templates) : bool
