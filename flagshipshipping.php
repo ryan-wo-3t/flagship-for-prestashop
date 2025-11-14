@@ -61,7 +61,7 @@ class FlagshipShipping extends CarrierModule
     {
         $this->name = 'flagshipshipping';
         $this->tab = 'shipping_logistics';
-        $this->version = '1.0.264';
+        $this->version = '1.0.265';
         $this->author = 'FlagShip Courier Solutions';
         $this->need_instance = 0;
         $this->url = SMARTSHIP_WEB_URL;
@@ -129,6 +129,8 @@ class FlagshipShipping extends CarrierModule
                 )
             ');
 
+        Configuration::updateValue('flagship_show_packing_layers', 0);
+
         $this->logger->logDebug("Flagship for prestashop installed");
         return parent::install();
     }
@@ -141,6 +143,7 @@ class FlagshipShipping extends CarrierModule
         Configuration::deleteByName('flagship_markup');
         Configuration::deleteByName('flagship_residential');
         Configuration::deleteByName('flagship_test_env');
+        Configuration::deleteByName('flagship_show_packing_layers');
 
         $query = new DbQuery();
         $query->select('*')->from('flagship_shipping');
@@ -270,6 +273,7 @@ class FlagshipShipping extends CarrierModule
         $shipmentData = null !== $shipmentId ? $this->getShipment($shipmentId) : [];
         $packedBoxes = [];
         $showBoxSizeToggle = (bool) Configuration::get('flagship_show_box_size');
+        $showPackingLayersToggle = (bool) Configuration::get('flagship_show_packing_layers');
 
         if ($showBoxSizeToggle && Configuration::get('flagship_packing_api')) {
             $order = new Order($id_order);
@@ -280,6 +284,7 @@ class FlagshipShipping extends CarrierModule
         }
 
         $showBoxSizes = $showBoxSizeToggle && !empty($packedBoxes);
+        $showPackingDetails = $showBoxSizes && $showPackingLayersToggle;
         $this->context->smarty->assign(array(
             'url' => $convertUrl,
             'shipmentFlag' => $shipmentFlag,
@@ -292,7 +297,7 @@ class FlagshipShipping extends CarrierModule
             'trackingUrl' => empty($shipmentData) ? '' : $this->getTrackingUrl($shipmentData),
             'packedBoxes' => $packedBoxes,
             'showBoxSizes' => $showBoxSizes,
-            'showPackingDetails' => $showBoxSizes
+            'showPackingDetails' => $showPackingDetails
         ));
 
         return $this->display(__FILE__, 'flagship.tpl');
@@ -724,6 +729,27 @@ class FlagshipShipping extends CarrierModule
                     [
                         'col' => 4,
                         'type' => 'select',
+                        'label' => $this->l('Show Packing Layer Details'),
+                        'name' => 'flagship_show_packing_layers',
+                        'desc' =>  $this->l('Display per-layer packing details when box sizes are shown.'),
+                        'options' => [
+                            'query' => [
+                                [
+                                    'key' => 0,
+                                    'name' => 'No'
+                                ],
+                                [
+                                    'key' => 1,
+                                    'name' => 'Yes'
+                                ]
+                            ],
+                            'id' => 'key',
+                            'name' => 'name',
+                        ]
+                    ],
+                    [
+                        'col' => 4,
+                        'type' => 'select',
                         'label' => $this->l('Residential Shipments'),
                         'desc' =>  $this->l('Mark all shipments as residential'),
                         'name' => 'flagship_residential',
@@ -863,6 +889,7 @@ class FlagshipShipping extends CarrierModule
             'flagship_packing_api' => Configuration::get('flagship_packing_api'),
             'flagship_tracking_email' => Configuration::get('flagship_tracking_email'),
             'flagship_show_box_size' => Configuration::get('flagship_show_box_size'),
+            'flagship_show_packing_layers' => Configuration::get('flagship_show_packing_layers'),
         ];
     }
 
@@ -884,6 +911,7 @@ class FlagshipShipping extends CarrierModule
         $packing = empty(Tools::getValue('flagship_packing_api')) ? 0 : Tools::getValue('flagship_packing_api');
         $trackingEmail = empty(Tools::getValue('flagship_tracking_email')) ? 0 : Tools::getValue('flagship_tracking_email');
         $showBoxSize = empty(Tools::getValue('flagship_show_box_size')) ? 0 : Tools::getValue('flagship_show_box_size');
+        $showPackingLayers = empty(Tools::getValue('flagship_show_packing_layers')) ? 0 : Tools::getValue('flagship_show_packing_layers');
 
         if (is_string(Configuration::get('flagship_fee')) && is_string(Configuration::get('flagship_api_token')) && is_string(Configuration::get('flagship_markup')) ) { //fields exist in db
             $feeFlag = $fee != Configuration::get('flagship_fee') ?
@@ -902,8 +930,10 @@ class FlagshipShipping extends CarrierModule
                                 Configuration::updateValue('flagship_packing_api', $packing) : 0;
             $showBoxSize = $showBoxSize != Configuration::get('flagship_show_box_size') ?
                                 Configuration::updateValue('flagship_show_box_size', $showBoxSize) : 0;
+            $showPackingLayers = $showPackingLayers != Configuration::get('flagship_show_packing_layers') ?
+                                Configuration::updateValue('flagship_show_packing_layers', $showPackingLayers) : 0;
 
-            return $this->displayConfirmation($this->getReturnMessage($apiToken, $testEnv, $feeFlag, $markupFlag, $residentialFlag,$emailOnLabel, $packing, $showBoxSize));
+            return $this->displayConfirmation($this->getReturnMessage($apiToken, $testEnv, $feeFlag, $markupFlag, $residentialFlag,$emailOnLabel, $packing, $showBoxSize, $showPackingLayers));
 
         }
 
@@ -919,7 +949,7 @@ class FlagshipShipping extends CarrierModule
         return $this->displayWarning($this->l("Oops! Token is invalid or same token is set."));
     }
 
-    protected function getReturnMessage(string $apiToken, int $testEnv, int $feeFlag, int $markupFlag, int $residentialFlag, int $emailOnLabel, int $packing, int $showBoxSize) : string
+    protected function getReturnMessage(string $apiToken, int $testEnv, int $feeFlag, int $markupFlag, int $residentialFlag, int $emailOnLabel, int $packing, int $showBoxSize, int $showPackingLayers) : string
     {
         $returnMessage = "<b>";
         $validToken = 0;
@@ -936,7 +966,7 @@ class FlagshipShipping extends CarrierModule
             $returnMessage .= "Token not updated! ";
         }
 
-        if($feeFlag || $markupFlag || $residentialFlag || $emailOnLabel || $packing || $showBoxSize){
+        if($feeFlag || $markupFlag || $residentialFlag || $emailOnLabel || $packing || $showBoxSize || $showPackingLayers){
             $returnMessage .= "Settings Updated";
         }
 

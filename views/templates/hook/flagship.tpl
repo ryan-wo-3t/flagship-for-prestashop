@@ -54,30 +54,41 @@
 {/if}
 
 {if $showBoxSizes}
-<div class="flagship-packed-boxes">
-	<p><strong>{l s='Selected box sizes' mod='flagshipshipping'}</strong></p>
-	<ul class="list-unstyled">
+<div class="flagship-packed-boxes card mt-3">
+	<div class="card-body">
+		<p class="card-title font-weight-bold mb-3">{l s='Selected box sizes' mod='flagshipshipping'}</p>
 		{foreach from=$packedBoxes item=box}
-			<li>
-				{$box.label|escape:'htmlall':'UTF-8'} - {$box.length|escape:'htmlall':'UTF-8'} x {$box.width|escape:'htmlall':'UTF-8'} x {$box.height|escape:'htmlall':'UTF-8'} {l s='in' mod='flagshipshipping'} ({$box.weight|escape:'htmlall':'UTF-8'} {l s='lb' mod='flagshipshipping'})
+			<div class="flagship-packed-box border rounded p-3 mb-3">
+				<div class="d-flex justify-content-between align-items-center flex-wrap">
+					<span class="h6 mb-2 mb-sm-0">{$box.label|escape:'htmlall':'UTF-8'}</span>
+					<span class="text-muted">
+						{$box.length|escape:'htmlall':'UTF-8'} × {$box.width|escape:'htmlall':'UTF-8'} × {$box.height|escape:'htmlall':'UTF-8'} {l s='in' mod='flagshipshipping'}
+						· {$box.weight|escape:'htmlall':'UTF-8'} {l s='lb' mod='flagshipshipping'}
+					</span>
+				</div>
 				{if $showPackingDetails && !empty($box.packing_method)}
-					<br/>
-					<small><strong>{l s='Packing method' mod='flagshipshipping'}:</strong> {$box.packing_method|escape:'htmlall':'UTF-8'}</small>
+					<div class="small text-muted mt-2">
+						<strong>{l s='Packing method' mod='flagshipshipping'}:</strong> {$box.packing_method|escape:'htmlall':'UTF-8'}
+					</div>
 				{/if}
 				{if $showPackingDetails && !empty($box.layers)}
-					<ul class="flagship-packed-layers list-unstyled mt-2">
+					<div class="flagship-packed-layers mt-2">
 						{foreach from=$box.layers item=layer}
-							<li>
-								<strong>{$layer.title|escape:'htmlall':'UTF-8'}</strong>
-								({$layer.start_in|escape:'htmlall':'UTF-8'} {l s='in' mod='flagshipshipping'}, {$layer.start_mm|escape:'htmlall':'UTF-8'} {l s='mm' mod='flagshipshipping'})
-								: {$layer.items|@implode:', '|escape:'htmlall':'UTF-8'}
-							</li>
+							<div class="border-left pl-3 py-2 mb-2 bg-light">
+								<span class="badge badge-secondary mr-2">{$layer.title|escape:'htmlall':'UTF-8'}</span>
+								<span class="text-muted">
+									{l s='Start' mod='flagshipshipping'}: {$layer.start_in|escape:'htmlall':'UTF-8'} {l s='in' mod='flagshipshipping'} / {$layer.start_mm|escape:'htmlall':'UTF-8'} {l s='mm' mod='flagshipshipping'}
+								</span>
+								<div class="mt-1">
+									{$layer.items|@implode:', '|escape:'htmlall':'UTF-8'}
+								</div>
+							</div>
 						{/foreach}
-					</ul>
+					</div>
 				{/if}
-			</li>
+			</div>
 		{/foreach}
-	</ul>
+	</div>
 </div>
 {/if}
 
