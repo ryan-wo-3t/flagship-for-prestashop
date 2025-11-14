@@ -41,7 +41,9 @@ use DVDoug\BoxPacker\NoBoxesAvailableException;
 use DVDoug\BoxPacker\Packer;
 use DVDoug\BoxPacker\PackedBoxList;
 use Flagship\Shipping\Exceptions\GetShipmentByIdException;
+use Flagship\Shipping\Exceptions\GetShipmentListException;
 use Flagship\Shipping\Flagship;
+use Flagship\Shipping\Objects\Shipment as FlagshipShipment;
 
 //NO Trailing slashes please
 define('SMARTSHIP_WEB_URL', 'https://smartship-ng.flagshipcompany.com');
@@ -61,7 +63,7 @@ class FlagshipShipping extends CarrierModule
     {
         $this->name = 'flagshipshipping';
         $this->tab = 'shipping_logistics';
-        $this->version = '1.0.266';
+        $this->version = '1.0.267';
         $this->author = 'FlagShip Courier Solutions';
         $this->need_instance = 0;
         $this->url = SMARTSHIP_WEB_URL;
@@ -267,6 +269,14 @@ class FlagshipShipping extends CarrierModule
         $this->orderBlockRendered = true;
 
         $this->url = Configuration::get('flagship_test_env') ? SMARTSHIP_TEST_WEB_URL : SMARTSHIP_WEB_URL;
+        $order = new Order($id_order);
+        $orderTrackingNumber = Validate::isLoadedObject($order) ? $this->getOrderTrackingNumber($order) : '';
+        $trackingShipment = !empty($orderTrackingNumber) ? $this->findFlagshipShipmentByTracking($orderTrackingNumber) : null;
+        $trackingIsFlagship = $trackingShipment instanceof FlagshipShipment;
+        $trackingShipmentLink = $trackingIsFlagship ? $this->getFlagshipShipmentDashboardUrl((int)$trackingShipment->shipment->id) : '';
+        $trackingCarrierLink = $trackingIsFlagship ? $this->getTrackingUrl(['shipment' => $trackingShipment->shipment]) : '';
+        $trackingCourierName = $trackingIsFlagship ? $trackingShipment->shipment->service->courier_name : '';
+
         $shipmentId = $this->getShipmentId($id_order);
         $shipmentFlag = is_null($shipmentId) ? 0 : $shipmentId;
         $convertUrl = $shipmentFlag ? $this->url."/shipping/$shipmentId/convert" : '';
@@ -277,8 +287,7 @@ class FlagshipShipping extends CarrierModule
         $showBoxSizeToggle = (bool) Configuration::get('flagship_show_box_size');
         $showPackingLayersToggle = (bool) Configuration::get('flagship_show_packing_layers');
 
-        if ($showBoxSizeToggle && Configuration::get('flagship_packing_api')) {
-            $order = new Order($id_order);
+        if ($showBoxSizeToggle && Configuration::get('flagship_packing_api') && Validate::isLoadedObject($order)) {
             $packageData = $this->getPackages($order);
             if ($this->boxPackingWasUsed && isset($packageData['items'])) {
                 $packedBoxes = $this->formatPackedBoxesForDisplay($packageData['items']);
@@ -299,7 +308,12 @@ class FlagshipShipping extends CarrierModule
             'trackingUrl' => empty($shipmentData) ? '' : $this->getTrackingUrl($shipmentData),
             'packedBoxes' => $packedBoxes,
             'showBoxSizes' => $showBoxSizes,
-            'showPackingDetails' => $showPackingDetails
+            'showPackingDetails' => $showPackingDetails,
+            'orderTrackingNumber' => $orderTrackingNumber,
+            'trackingIsFlagship' => $trackingIsFlagship,
+            'trackingCourierName' => $trackingCourierName,
+            'trackingShipmentLink' => $trackingShipmentLink,
+            'trackingCarrierLink' => $trackingCarrierLink
         ));
 
         return $this->display(__FILE__, 'flagship.tpl');
@@ -1683,6 +1697,66 @@ class FlagshipShipping extends CarrierModule
         }
 
         return $summary;
+    }
+
+    protected function getOrderTrackingNumber(Order $order) : string
+    {
+        if (!empty($order->shipping_number)) {
+            return $order->shipping_number;
+        }
+
+        if (method_exists($order, 'getIdOrderCarrier')) {
+            $idOrderCarrier = (int)$order->getIdOrderCarrier();
+            if ($idOrderCarrier > 0) {
+                $orderCarrier = new OrderCarrier($idOrderCarrier);
+                if (!empty($orderCarrier->tracking_number)) {
+                    return $orderCarrier->tracking_number;
+                }
+            }
+        }
+
+        $rows = Db::getInstance()->executeS('SELECT tracking_number FROM '._DB_PREFIX_.'order_carrier WHERE id_order = '.(int)$order->id.' ORDER BY date_add DESC');
+        foreach ($rows as $row) {
+            if (!empty($row['tracking_number'])) {
+                return $row['tracking_number'];
+            }
+        }
+
+        return '';
+    }
+
+    protected function findFlagshipShipmentByTracking(string $trackingNumber) : ?FlagshipShipment
+    {
+        if (empty($trackingNumber)) {
+            return null;
+        }
+        $token = Configuration::get('flagship_api_token');
+        if (empty($token)) {
+            return null;
+        }
+
+        try {
+            $flagship = new Flagship($token, $this->getBaseUrl(), 'Prestashop', _PS_VERSION_);
+            $request = $flagship->getShipmentListRequest();
+            $request->addFilter('tracking_number', rawurlencode($trackingNumber));
+            $shipments = $request->execute();
+            return $shipments->getByTrackingNumber($trackingNumber);
+        } catch (GetShipmentListException $e) {
+            $this->logger->logDebug("FlagShip tracking lookup empty: ".$e->getMessage());
+            return null;
+        } catch (Exception $e) {
+            $this->logger->logError("FlagShip tracking lookup failed: ".$e->getMessage());
+            return null;
+        }
+    }
+
+    protected function getFlagshipShipmentDashboardUrl(int $shipmentId) : string
+    {
+        if ($shipmentId <= 0) {
+            return '';
+        }
+        $base = Configuration::get('flagship_test_env') ? SMARTSHIP_TEST_WEB_URL : SMARTSHIP_WEB_URL;
+        return rtrim($base, '/').'/shipping/'.$shipmentId;
     }
 
 }
