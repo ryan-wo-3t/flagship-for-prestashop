@@ -60,7 +60,7 @@ class FlagshipShipping extends CarrierModule
     {
         $this->name = 'flagshipshipping';
         $this->tab = 'shipping_logistics';
-        $this->version = '1.0.261';
+        $this->version = '1.0.262';
         $this->author = 'FlagShip Courier Solutions';
         $this->need_instance = 0;
         $this->url = SMARTSHIP_WEB_URL;
@@ -88,6 +88,8 @@ class FlagshipShipping extends CarrierModule
         $this->ps_versions_compliancy = array('min' => '1.7.8', 'max' => _PS_VERSION_);
 
         $this->registerHook('displayAdminOrderSide');
+        $this->registerHook('displayAdminOrderMainBottom');
+        $this->registerHook('displayAdminOrderMainBottom2');
         $this->registerHook('actionValidateCustomerAddressForm');
         $this->registerHook('actionCartSave');
     }
@@ -147,7 +149,7 @@ class FlagshipShipping extends CarrierModule
         if (count($rows) == 0) {
             Db::getInstance()->execute('DROP TABLE `'._DB_PREFIX_.'flagship_shipping`');
         }
-        
+
         Db::getInstance()->execute('DROP TABLE `'._DB_PREFIX_.'flagship_boxes`');
         Db::getInstance()->execute('DELETE FROM `'._DB_PREFIX_.'carrier` WHERE external_module_name = "flagshipshipping"');
         $this->logger->logDebug("Flagship for prestashop uninstalled");
@@ -216,7 +218,49 @@ class FlagshipShipping extends CarrierModule
 
     public function hookDisplayBackOfficeOrderActions(array $params)
     {
-        $id_order = $params["id_order"];
+        $id_order = isset($params['id_order']) ? (int) $params['id_order'] : 0;
+        return $this->renderAdminOrderBlock($id_order);
+    }
+
+    public function hookDisplayAdminOrderSide(array $params)
+    {
+        $id_order = isset($params['id_order']) ? (int) $params['id_order'] : 0;
+        return $this->renderAdminOrderBlock($id_order);
+    }
+
+    public function hookDisplayAdminOrderMainBottom(array $params)
+    {
+        $id_order = $this->getOrderIdFromParams($params);
+        return $this->renderAdminOrderBlock($id_order);
+    }
+
+    public function hookDisplayAdminOrderMainBottom2(array $params)
+    {
+        $id_order = $this->getOrderIdFromParams($params);
+        return $this->renderAdminOrderBlock($id_order);
+    }
+
+    protected function getOrderIdFromParams(array $params) : int
+    {
+        if (isset($params['id_order'])) {
+            return (int) $params['id_order'];
+        }
+        if (isset($params['orderId'])) {
+            return (int) $params['orderId'];
+        }
+        if (isset($params['order']) && isset($params['order']['id'])) {
+            return (int) $params['order']['id'];
+        }
+
+        return 0;
+    }
+
+    protected function renderAdminOrderBlock(int $id_order) : string
+    {
+        if ($id_order <= 0) {
+            return '';
+        }
+
         $this->url = Configuration::get('flagship_test_env') ? SMARTSHIP_TEST_WEB_URL : SMARTSHIP_WEB_URL;
         $shipmentId = $this->getShipmentId($id_order);
         $shipmentFlag = is_null($shipmentId) ? 0 : $shipmentId;
@@ -247,6 +291,7 @@ class FlagshipShipping extends CarrierModule
             'packedBoxes' => $packedBoxes,
             'showBoxSizes' => $showBoxSizes
         ));
+
         return $this->display(__FILE__, 'flagship.tpl');
     }
 
@@ -304,7 +349,7 @@ class FlagshipShipping extends CarrierModule
         if ($id_address_delivery == 0) {
             return $shipping_cost;
         }
-       
+
         $carrier = new Carrier($this->id_carrier);
         if (isset(Context::getContext()->cookie->rates)) {
             $rate = explode(",", Context::getContext()->cookie->rate);
@@ -315,7 +360,12 @@ class FlagshipShipping extends CarrierModule
         $token = Configuration::get('flagship_api_token');
         $url = $this->getBaseUrl();
         $flagship = new Flagship($token, $url, 'Prestashop', _PS_VERSION_);
-        $payload = $this->getPayload($address);
+        try {
+            $payload = $this->getPayload($address);
+        } catch (Exception $e) {
+            $this->logger->logError("Unable to build FlagShip payload: ".$e->getMessage());
+            return false;
+        }
 
         if (!isset(Context::getContext()->cookie->rates)) {
             $storeName = $this->context->shop->name;
@@ -350,7 +400,7 @@ class FlagshipShipping extends CarrierModule
             $cost += floatVal(Configuration::get('flagship_fee'));
             $shipping_cost=Tools::substr($value, 0, strpos($value, "-")) == $carrier->name ? $cost : $shipping_cost;
         }
-        
+
         return $shipping_cost;
     }
 
@@ -373,7 +423,7 @@ class FlagshipShipping extends CarrierModule
     {
         unset(Context::getContext()->cookie->rates);
         unset(Context::getContext()->cookie->rate);
-        
+
         return true;
     }
 
@@ -492,7 +542,10 @@ class FlagshipShipping extends CarrierModule
             "suite"=>substr(Configuration::get('PS_SHOP_ADDR2'),0,17),
             "city"=>Configuration::get('PS_SHOP_CITY'),
             "country"=>Country::getIsoById(Configuration::get('PS_SHOP_COUNTRY_ID')),
-            "state"=>$this->getStateCode(Configuration::get('PS_SHOP_STATE_ID')),
+            "state"=>$this->getStateCode(
+                (int) Configuration::get('PS_SHOP_STATE_ID'),
+                (int) Configuration::get('PS_SHOP_COUNTRY_ID')
+            ),
             "postal_code"=>Configuration::get('PS_SHOP_CODE'),
             "phone"=> Configuration::get('PS_SHOP_PHONE'),
             "is_commercial"=>true
@@ -516,7 +569,7 @@ class FlagshipShipping extends CarrierModule
             "suite"=>substr($addressTo->address2,0,17),
             "city"=>$addressTo->city,
             "country"=>Country::getIsoById((int)$addressTo->id_country),
-            "state"=>$this->getStateCode((int)$addressTo->id_state),
+            "state"=>$this->getStateCode((int)$addressTo->id_state, (int)$addressTo->id_country),
             "postal_code"=>$addressTo->postcode,
             "phone"=> $addressTo->phone,
             "is_commercial"=>$isCommercial
@@ -813,7 +866,7 @@ class FlagshipShipping extends CarrierModule
     /**
      * Save form data.
      */
-    protected function postProcess() 
+    protected function postProcess()
     {
         $apiToken = empty(Tools::getValue('flagship_api_token')) ?
                 Configuration::get('flagship_api_token') :
@@ -966,7 +1019,7 @@ class FlagshipShipping extends CarrierModule
         return false;
     }
 
-    protected function setPacking(string $packing) : int 
+    protected function setPacking(string $packing) : int
     {
         return Configuration::updateValue('flagship_packing_api', $packing);
     }
@@ -1114,17 +1167,73 @@ class FlagshipShipping extends CarrierModule
         return 0;
     }
 
-    protected function getStateCode(int $code) : string
+    protected function getStateCode(int $stateId, int $countryId = 0) : string
     {
-        if ($code == 0) {
-            return 'QC';
-        }
-        $sql = new DbQuery();
-        $sql->select('iso_code');
-        $sql->from('state', 's');
-        $sql->where('s.id_state = '.$code);
+        $countryId = (int)$countryId;
 
-        return Db::getInstance()->executeS($sql)[0]['iso_code'];
+        if ($stateId === 0) {
+            $this->assertUsStateRequirement($countryId);
+            return $this->getDefaultStateCode();
+        }
+
+        $sql = new DbQuery();
+        $sql->select('s.iso_code, s.id_country');
+        $sql->from('state', 's');
+        $sql->where('s.id_state = '.(int)$stateId);
+
+        $state = Db::getInstance()->getRow($sql);
+        if (!$state) {
+            $this->assertUsStateRequirement($countryId);
+            return $this->getDefaultStateCode();
+        }
+
+        $iso = Tools::strtoupper($state['iso_code']);
+        $resolvedCountryId = (int)$state['id_country'] ?: $countryId;
+
+        if ($this->isUnitedStates($resolvedCountryId) && !$this->isValidUsState($iso)) {
+            throw new Exception($this->l('US shipments require a valid two-letter state.'));
+        }
+
+        return empty($iso) ? $this->getDefaultStateCode() : $iso;
+    }
+
+    protected function assertUsStateRequirement(int $countryId) : void
+    {
+        if ($countryId > 0 && $this->isUnitedStates($countryId)) {
+            throw new Exception($this->l('US shipments require a valid two-letter state.'));
+        }
+    }
+
+    protected function getDefaultStateCode() : string
+    {
+        return 'QC';
+    }
+
+    protected function isUnitedStates(int $countryId) : bool
+    {
+        if ($countryId <= 0) {
+            return false;
+        }
+
+        static $isoCache = [];
+        if (!array_key_exists($countryId, $isoCache)) {
+            $isoCache[$countryId] = Tools::strtoupper((string) Country::getIsoById($countryId));
+        }
+
+        return $isoCache[$countryId] === 'US';
+    }
+
+    protected function isValidUsState(string $stateCode) : bool
+    {
+        static $validStates = [
+            'AL','AK','AZ','AR','CA','CO','CT','DE','FL','GA',
+            'HI','ID','IL','IN','IA','KS','KY','LA','ME','MD',
+            'MA','MI','MN','MS','MO','MT','NE','NV','NH','NJ',
+            'NM','NY','NC','ND','OH','OK','OR','PA','RI','SC',
+            'SD','TN','TX','UT','VT','VA','WA','WV','WI','WY'
+        ];
+
+        return in_array($stateCode, $validStates, true);
     }
 
     protected function getPayload(Address $address) : array
@@ -1133,7 +1242,10 @@ class FlagshipShipping extends CarrierModule
         $from = [
             "city"=>Configuration::get('PS_SHOP_CITY'),
             "country"=>Country::getIsoById(Configuration::get('PS_SHOP_COUNTRY_ID')),
-            "state"=>$this->getStateCode(Configuration::get('PS_SHOP_STATE_ID')),
+            "state"=>$this->getStateCode(
+                (int) Configuration::get('PS_SHOP_STATE_ID'),
+                (int) Configuration::get('PS_SHOP_COUNTRY_ID')
+            ),
             "postal_code"=>Configuration::get('PS_SHOP_CODE'),
             "is_commercial"=>true
         ];
@@ -1141,7 +1253,7 @@ class FlagshipShipping extends CarrierModule
         $to = [
             "city"=>$address->city,
             "country"=>Country::getIsoById($address->id_country),
-            "state"=>$this->getStateCode($address->id_state),
+            "state"=>$this->getStateCode((int)$address->id_state, (int)$address->id_country),
             "postal_code"=>$address->postcode,
             "is_commercial"=> Configuration::get('flagship_residential') ? false : true
         ];
@@ -1172,7 +1284,20 @@ class FlagshipShipping extends CarrierModule
 
         $rows = Db::getInstance()->executeS($query);
         $boxes = [];
+        $usePackingApi = (bool) Configuration::get('flagship_packing_api');
         foreach ($rows as $row) {
+            if ($usePackingApi) {
+                $boxes[] = [
+                    "box_model" => $row["model"],
+                    "length" => $this->getPackingDimension($row["length"]),
+                    "width" => $this->getPackingDimension($row["width"]),
+                    "height" => $this->getPackingDimension($row["height"]),
+                    "weight" => $this->getPackingWeight($row["weight"]),
+                    "max_weight" => $this->getPackingWeight($row["max_weight"])
+                ];
+                continue;
+            }
+
             $boxes[] = [
                 "box_model" => $row["model"],
                 "length" => ceil($this->getDimension($row["length"])),
@@ -1189,33 +1314,38 @@ class FlagshipShipping extends CarrierModule
     {
         $products = is_null($order) ? Context::getContext()->cart->getProducts() : $order->getProductsDetail();
         $items = [];
+        $packingItems = [];
         $boxes = $this->getBoxes();
         $this->boxPackingWasUsed = false;
+        $usePackingApi = (bool) Configuration::get('flagship_packing_api');
 
         foreach ($products as $product) {
             if ($product['is_virtual']) {
                 continue;
             }
             $items = $this->getItemsByQty($product, $order, $items);
+            if ($usePackingApi) {
+                $packingItems = $this->getItemsByQty($product, $order, $packingItems, true);
+            }
         }
 
         if (count($items) == 0) {
             return $this->buildPackageStructure($items);
         }
 
-        if (!Configuration::get('flagship_packing_api') || count($boxes) == 0) {
+        if (!$usePackingApi || count($boxes) == 0) {
             return $this->buildPackageStructure($items);
         }
 
         $packingPayload = [
-            'items' => $items,
+            'items' => $packingItems,
             'boxes' => $boxes,
-            'units' => "imperial"
+            'units' => "metric"
         ];
 
         try{
             $this->logger->logDebug("Packing payload (BoxPacker): ".json_encode($packingPayload));
-            $packedItems = $this->packItemsWithBoxPacker($items, $boxes);
+            $packedItems = $this->packItemsWithBoxPacker($packingItems, $boxes);
             $this->logger->logDebug("Packing response (BoxPacker): ".json_encode($packedItems));
 
             if (count($packedItems) === 0) {
@@ -1233,7 +1363,7 @@ class FlagshipShipping extends CarrierModule
             Cache::store('packagesCount', 0);
             return [];
         }
-        
+
     }
 
     protected function buildPackageStructure(array $items) : array
@@ -1254,11 +1384,11 @@ class FlagshipShipping extends CarrierModule
             $packer->addBox(
                 new FlagshipPackingBox(
                     $box['box_model'],
-                    $this->convertInchesToMillimetres((float)$box['width']),
-                    $this->convertInchesToMillimetres((float)$box['length']),
-                    $this->convertInchesToMillimetres((float)$box['height']),
-                    $this->convertPoundsToGrams((float)$box['weight']),
-                    $this->convertPoundsToGrams((float)$box['max_weight'])
+                    (int)$box['width'],
+                    (int)$box['length'],
+                    (int)$box['height'],
+                    (int)$box['weight'],
+                    (int)$box['max_weight']
                 )
             );
         }
@@ -1268,10 +1398,10 @@ class FlagshipShipping extends CarrierModule
             $packer->addItem(
                 new FlagshipPackingItem(
                     $description,
-                    $this->convertInchesToMillimetres((float)$item['width']),
-                    $this->convertInchesToMillimetres((float)$item['length']),
-                    $this->convertInchesToMillimetres((float)$item['height']),
-                    $this->convertPoundsToGrams((float)$item['weight'])
+                    (int)$item['width'],
+                    (int)$item['length'],
+                    (int)$item['height'],
+                    (int)$item['weight']
                 )
             );
         }
@@ -1301,16 +1431,16 @@ class FlagshipShipping extends CarrierModule
         return $packedItems;
     }
 
-    protected function getItemsByQty($product, $order, $items) : array
+    protected function getItemsByQty($product, $order, array $items, bool $forPacking = false) : array
     {
         $qty = is_null($order) ? $product["quantity"] : $product["product_quantity"];
 
         for ($i=0; $i < $qty; $i++) {
             $items[] = [
-                "width"  => $this->getDimension($product["width"]),
-                "height" => $this->getDimension($product["height"]),
-                "length" => $this->getDimension($product["depth"]),
-                "weight" => $this->getWeight($product["weight"]),
+                "width"  => $forPacking ? $this->getPackingDimension($product["width"]) : $this->getDimension($product["width"]),
+                "height" => $forPacking ? $this->getPackingDimension($product["height"]) : $this->getDimension($product["height"]),
+                "length" => $forPacking ? $this->getPackingDimension($product["depth"]) : $this->getDimension($product["depth"]),
+                "weight" => $forPacking ? $this->getPackingWeight($product["weight"]) : $this->getWeight($product["weight"]),
                 "description"=>is_null($order) ? $product["name"] : $product["product_name"]
             ];
         }
@@ -1329,6 +1459,27 @@ class FlagshipShipping extends CarrierModule
         return $dimension;
     }
 
+    protected function getPackingDimension($dimension) : int
+    {
+        $unit = Tools::strtolower(Configuration::get('PS_DIMENSION_UNIT'));
+        switch ($unit) {
+            case 'cm':
+                $dimension *= 10;
+                break;
+            case 'm':
+                $dimension *= 1000;
+                break;
+            case 'mm':
+                // already in millimetres
+                break;
+            default:
+                $dimension *= 25.4;
+                break;
+        }
+
+        return max(1, (int)ceil($dimension));
+    }
+
     protected function getWeight($weight)
     {
         if(Configuration::get('PS_WEIGHT_UNIT') === 'kg') {
@@ -1340,6 +1491,24 @@ class FlagshipShipping extends CarrierModule
             $weight = max(ceil($weight),1);
         }
         return $weight;
+    }
+
+    protected function getPackingWeight($weight) : int
+    {
+        $unit = Tools::strtolower(Configuration::get('PS_WEIGHT_UNIT'));
+        switch ($unit) {
+            case 'kg':
+                $weight *= 1000;
+                break;
+            case 'g':
+                // already in grams
+                break;
+            default:
+                $weight *= 453.592;
+                break;
+        }
+
+        return max(1, (int)ceil($weight));
     }
 
     protected function convertInchesToMillimetres(float $value) : int
@@ -1382,7 +1551,7 @@ class FlagshipShipping extends CarrierModule
             $this->logger->logError("Error getting shipment: ".$e->getMessage());
             return [];
         }
-        
+
     }
 
     protected function getTrackingUrl($shipment) : string {
