@@ -215,6 +215,10 @@ class FlagshipShipping extends CarrierModule
             $output .= $this->postProcess();
         }
 
+        if (((bool)Tools::isSubmit('submit'.$this->name.'TrackingModule')) == true) {
+            $output .= $this->processTrackingLinksForm();
+        }
+
         if (((bool)Tools::isSubmit('submit'.$this->name.'BoxModule')) == true) {
             $output .= $this->insertBoxDetails();
         }
@@ -594,7 +598,7 @@ class FlagshipShipping extends CarrierModule
         $helper->allow_employee_form_lang = Configuration::get('PS_BO_ALLOW_EMPLOYEE_FORM_LANG', 0);
 
         $helper->identifier = $this->identifier;
-        $helper->submit_action = 'submit'.$this->name.'Module';
+        $helper->submit_action = 'submit'.$this->name.'TrackingModule';
         $helper->currentIndex = $this->context->link->getAdminLink('AdminModules', false)
             .'&configure='.$this->name.'&tab_module='.$this->tab.'&module_name='.$this->name;
         $helper->token = Tools::getAdminTokenLite('AdminModules');
@@ -967,15 +971,6 @@ class FlagshipShipping extends CarrierModule
         ];
     }
 
-    protected function getTrackingLinksFormValues() : array
-    {
-        $values = [];
-        foreach ($this->getTrackingUrlConfig() as $carrier => $template) {
-            $values['flagship_tracking_url_'.$carrier] = $template;
-        }
-        return $values;
-    }
-
     /**
      * Save form data.
      */
@@ -992,16 +987,12 @@ class FlagshipShipping extends CarrierModule
         $testEnv = empty(Tools::getValue('flagship_test_env')) ? 0 : Tools::getValue('flagship_test_env');
         $emailOnLabel = empty(Tools::getValue('flagship_email_on_label')) ? 0 : Tools::getValue('flagship_email_on_label');
         $packing = empty(Tools::getValue('flagship_packing_api')) ? 0 : Tools::getValue('flagship_packing_api');
-        $trackingEmail = empty(Tools::getValue('flagship_tracking_email')) ? 0 : Tools::getValue('flagship_tracking_email');
-        $showBoxSize = empty(Tools::getValue('flagship_show_box_size')) ? 0 : Tools::getValue('flagship_show_box_size');
-        $showPackingLayers = empty(Tools::getValue('flagship_show_packing_layers')) ? 0 : Tools::getValue('flagship_show_packing_layers');
-        $trackingUrlChanges = 0;
-        $submittedTrackingUrls = [];
-        foreach ($this->getTrackingUrlDefaults() as $carrier => $defaultUrl) {
-            $fieldName = 'flagship_tracking_url_'.$carrier;
-            $value = (string)Tools::getValue($fieldName, '');
-            $submittedTrackingUrls[$carrier] = $this->sanitizeTrackingTemplate($value, $defaultUrl);
-        }
+        $trackingEmail = Tools::getValue('flagship_tracking_email', Configuration::get('flagship_tracking_email'));
+        $trackingEmail = $trackingEmail === '' ? (int)Configuration::get('flagship_tracking_email') : (int)$trackingEmail;
+        $showBoxSize = Tools::getValue('flagship_show_box_size', Configuration::get('flagship_show_box_size'));
+        $showBoxSize = $showBoxSize === '' ? (int)Configuration::get('flagship_show_box_size') : (int)$showBoxSize;
+        $showPackingLayers = Tools::getValue('flagship_show_packing_layers', Configuration::get('flagship_show_packing_layers'));
+        $showPackingLayers = $showPackingLayers === '' ? (int)Configuration::get('flagship_show_packing_layers') : (int)$showPackingLayers;
 
         if (is_string(Configuration::get('flagship_fee')) && is_string(Configuration::get('flagship_api_token')) && is_string(Configuration::get('flagship_markup')) ) { //fields exist in db
             $feeFlag = $fee != Configuration::get('flagship_fee') ?
@@ -1022,17 +1013,7 @@ class FlagshipShipping extends CarrierModule
                                 Configuration::updateValue('flagship_show_box_size', $showBoxSize) : 0;
             $showPackingLayers = $showPackingLayers != Configuration::get('flagship_show_packing_layers') ?
                                 Configuration::updateValue('flagship_show_packing_layers', $showPackingLayers) : 0;
-            foreach ($submittedTrackingUrls as $carrier => $template) {
-                $key = 'flagship_tracking_url_'.$carrier;
-                if ($template != Configuration::get($key)) {
-                    Configuration::updateValue($key, $template);
-                    $trackingUrlChanges = 1;
-                }
-            }
-
-            $trackingUrlChanges = $this->updateCarrierTrackingTemplates($submittedTrackingUrls) ? 1 : $trackingUrlChanges;
-
-            return $this->displayConfirmation($this->getReturnMessage($apiToken, $testEnv, $feeFlag, $markupFlag, $residentialFlag,$emailOnLabel, $packing, $showBoxSize, $showPackingLayers, $trackingUrlChanges));
+            return $this->displayConfirmation($this->getReturnMessage($apiToken, $testEnv, $feeFlag, $markupFlag, $residentialFlag,$emailOnLabel, $packing, $showBoxSize, $showPackingLayers));
 
         }
 
@@ -1048,7 +1029,7 @@ class FlagshipShipping extends CarrierModule
         return $this->displayWarning($this->l("Oops! Token is invalid or same token is set."));
     }
 
-    protected function getReturnMessage(string $apiToken, int $testEnv, int $feeFlag, int $markupFlag, int $residentialFlag, int $emailOnLabel, int $packing, int $showBoxSize, int $showPackingLayers, int $trackingUrls) : string
+    protected function getReturnMessage(string $apiToken, int $testEnv, int $feeFlag, int $markupFlag, int $residentialFlag, int $emailOnLabel, int $packing, int $showBoxSize, int $showPackingLayers) : string
     {
         $returnMessage = "<b>";
         $validToken = 0;
@@ -1065,12 +1046,31 @@ class FlagshipShipping extends CarrierModule
             $returnMessage .= "Token not updated! ";
         }
 
-        if($feeFlag || $markupFlag || $residentialFlag || $emailOnLabel || $packing || $showBoxSize || $showPackingLayers || $trackingUrls){
+        if($feeFlag || $markupFlag || $residentialFlag || $emailOnLabel || $packing || $showBoxSize || $showPackingLayers){
             $returnMessage .= "Settings Updated";
         }
 
         $returnMessage .= "</b>";
         return $returnMessage;
+    }
+
+    protected function processTrackingLinksForm() : string
+    {
+        $submittedTrackingUrls = [];
+        foreach ($this->getTrackingUrlDefaults() as $carrier => $defaultUrl) {
+            $fieldName = 'flagship_tracking_url_'.$carrier;
+            $value = (string)Tools::getValue($fieldName, '');
+            $template = $this->sanitizeTrackingTemplate($value, $defaultUrl);
+            $submittedTrackingUrls[$carrier] = $template;
+            Configuration::updateValue('flagship_tracking_url_'.$carrier, $template);
+        }
+
+        $carriersUpdated = $this->updateCarrierTrackingTemplates($submittedTrackingUrls);
+        $message = $this->l('Tracking URLs updated.');
+        if ($carriersUpdated) {
+            $message .= ' '.$this->l('Carrier links refreshed.');
+        }
+        return $this->displayConfirmation($message);
     }
 
     protected function prepareCarriers($availableServices) : int {
@@ -1812,6 +1812,15 @@ class FlagshipShipping extends CarrierModule
                 ],
             ],
         ];
+    }
+
+    protected function getTrackingLinksFormValues() : array
+    {
+        $values = [];
+        foreach ($this->getTrackingUrlConfig() as $carrier => $template) {
+            $values['flagship_tracking_url_'.$carrier] = $template;
+        }
+        return $values;
     }
 
     protected function sanitizeTrackingTemplate(string $template, string $default) : string
