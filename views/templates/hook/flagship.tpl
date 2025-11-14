@@ -1,4 +1,4 @@
-{*
+ï»¿{*
 * FlagShip Courier Solutions
 *
 * NOTICE OF LICENSE
@@ -29,54 +29,76 @@
 
 {if $isNew}
 	<a href="#" class="btn btn-default send_to_flagship" id="send_to_flagship"><i class="icon-truck"></i>Send To FlagShip</a>
-{elseif $isDeleted}
-	<p>Shipment cannot be retrieved. Please visit your FlagShip dashboard</p>
 {else}
-	<div>
-	{if $shipmentFlag}
-		{if !$trackingIsFlagship && !empty($trackingNumber) }
-			<strong>{l s='Tracking number' mod='flagshipshipping'}:</strong> {$trackingNumber|escape:'htmlall':'UTF-8'}
-			<br/>
-			<a class="btn btn-default" href="{$trackingUrl|escape:'htmlall':'UTF-8'}" target="_blank" class="shipmentLink">
-				{l s='Track your shipment' mod='flagshipshipping'}
-			</a>
-		{else}
-		<span class="success font-weight-bold">FlagShip Shipment: </span>
-		<a href="{$url|escape:'htmlall':'UTF-8'}" target="_blank" class="shipmentLink">
-		{$shipmentFlag|escape:'htmlall':'UTF-8'}
-		</a>
-		<br/>
-		<a class="btn btn-default send_to_flagship" id="update_shipment">{l s='Update Shipment' mod='flagshipshipping'}</a>
-		<a class="btn btn-default convert" id="convert_shipment" href="{$url|escape:'htmlall':'UTF-8'}" target="_blank">{l s='Convert Shipment' mod='flagshipshipping'}</a>
-		{/if}
-	{/if}
-	</div>
-{/if}
-
-{if $trackingIsFlagship}
-<div class="flagship-tracking card mt-3">
+<div class="card flagship-shipment mt-3">
 	<div class="card-body">
-		<p class="card-title font-weight-bold mb-2">{l s='FlagShip Tracking' mod='flagshipshipping'}</p>
-		<p class="mb-3">
-			<strong>{l s='Tracking number' mod='flagshipshipping'}:</strong>
-			{$orderTrackingNumber|escape:'htmlall':'UTF-8'}
-		</p>
-		<div class="btn-group">
-			{if $trackingShipmentLink}
-			<a class="btn btn-outline-primary" href="{$trackingShipmentLink|escape:'htmlall':'UTF-8'}" target="_blank">
-				{l s='View in FlagShip' mod='flagshipshipping'}
-			</a>
-			{/if}
-			{if $trackingCarrierLink}
-			<a class="btn btn-outline-secondary" href="{$trackingCarrierLink|escape:'htmlall':'UTF-8'}" target="_blank">
-				{if $trackingCourierName}
-					{l s='Track with %s' sprintf=[$trackingCourierName] mod='flagshipshipping'}
-				{else}
-					{l s='Track with carrier' mod='flagshipshipping'}
+		<div class="d-flex flex-wrap justify-content-between align-items-center">
+			<div>
+				<p class="card-title font-weight-bold mb-1">{l s='FlagShip Shipment' mod='flagshipshipping'}</p>
+				{if $shipmentFlag}
+					<p class="mb-2">
+						<strong>{l s='Shipment ID' mod='flagshipshipping'}:</strong>
+						{if !$isDeleted && $url}
+						<a href="{$url|escape:'htmlall':'UTF-8'}" target="_blank" class="shipmentLink">
+							{$shipmentFlag|escape:'htmlall':'UTF-8'}
+						</a>
+						{else}
+							{$shipmentFlag|escape:'htmlall':'UTF-8'}
+						{/if}
+					</p>
 				{/if}
-			</a>
-			{/if}
+
+				{if $trackingIsFlagship}
+					<p class="mb-0">
+						<strong>{l s='Tracking number' mod='flagshipshipping'}:</strong>
+						{$orderTrackingNumber|escape:'htmlall':'UTF-8'}
+					</p>
+				{elseif !empty($trackingNumber)}
+					<p class="mb-0">
+						<strong>{l s='Tracking number' mod='flagshipshipping'}:</strong>
+						{$trackingNumber|escape:'htmlall':'UTF-8'}
+					</p>
+				{/if}
+			</div>
+
+			<div class="btn-group mb-2">
+				{if !$isDeleted && $shipmentFlag}
+					<a class="btn btn-default send_to_flagship" id="update_shipment">{l s='Update Shipment' mod='flagshipshipping'}</a>
+					<a class="btn btn-default convert" id="convert_shipment" href="{$url|escape:'htmlall':'UTF-8'}" target="_blank">{l s='Convert Shipment' mod='flagshipshipping'}</a>
+				{/if}
+			</div>
 		</div>
+
+		{if $isDeleted}
+			<div class="alert alert-warning mt-3 mb-0">
+				{l s='Shipment cannot be retrieved. Please visit your FlagShip dashboard.' mod='flagshipshipping'}
+			</div>
+		{else}
+			{if $trackingIsFlagship}
+				<div class="btn-group mt-3">
+					{if $trackingShipmentLink}
+					<a class="btn btn-outline-primary" href="{$trackingShipmentLink|escape:'htmlall':'UTF-8'}" target="_blank">
+						{l s='View in FlagShip' mod='flagshipshipping'}
+					</a>
+					{/if}
+					{if $trackingCarrierLink}
+					<a class="btn btn-outline-secondary" href="{$trackingCarrierLink|escape:'htmlall':'UTF-8'}" target="_blank">
+						{if $trackingCourierName}
+							{l s='Track with %s' sprintf=[$trackingCourierName] mod='flagshipshipping'}
+						{else}
+							{l s='Track with carrier' mod='flagshipshipping'}
+						{/if}
+					</a>
+					{/if}
+				</div>
+			{elseif $trackingUrl}
+				<div class="mt-3">
+					<a class="btn btn-outline-secondary" href="{$trackingUrl|escape:'htmlall':'UTF-8'}" target="_blank">
+						{l s='Track with carrier' mod='flagshipshipping'}
+					</a>
+				</div>
+			{/if}
+		{/if}
 	</div>
 </div>
 {/if}
@@ -90,8 +112,8 @@
 				<div class="d-flex justify-content-between align-items-center flex-wrap">
 					<span class="h6 mb-2 mb-sm-0">{$box.label|escape:'htmlall':'UTF-8'}</span>
 					<span class="text-muted">
-					{$box.length|escape:'htmlall':'UTF-8'} &times; {$box.width|escape:'htmlall':'UTF-8'} &times; {$box.height|escape:'htmlall':'UTF-8'} {l s='in' mod='flagshipshipping'}
-					· {$box.weight|escape:'htmlall':'UTF-8'} {l s='lb' mod='flagshipshipping'}
+						{$box.length|escape:'htmlall':'UTF-8'} &times; {$box.width|escape:'htmlall':'UTF-8'} &times; {$box.height|escape:'htmlall':'UTF-8'} {l s='in' mod='flagshipshipping'}
+						&middot; {$box.weight|escape:'htmlall':'UTF-8'} {l s='lb' mod='flagshipshipping'}
 					</span>
 				</div>
 				{if $showPackingDetails && !empty($box.packing_method)}
@@ -162,9 +184,4 @@
 		});
 	});
 </script>
-
-
-
-
-
 
