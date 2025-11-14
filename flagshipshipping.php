@@ -352,7 +352,11 @@ class FlagshipShipping extends CarrierModule
             $flagship = new Flagship($token, $url, 'Prestashop', _PS_VERSION_);
             $payload = $this->getPayloadForShipment($orderId);
             $this->logger->logDebug("Payload for prepare shipment: ".json_encode($payload));
-            $prepareShipment = $flagship->prepareShipmentRequest($payload)->setStoreName($storeName)->setOrderId($orderId);
+            $orderLink = $this->getOrderAdminLink($orderId);
+            $prepareShipment = $flagship->prepareShipmentRequest($payload)
+                ->setStoreName($storeName)
+                ->setOrderId($orderId)
+                ->setOrderLink($orderLink);
             $prepareShipment = $prepareShipment->execute();
             $shipmentId = $prepareShipment->shipment->id;
             $this->logger->logDebug("Flagship shipment prepared for order id: ".$orderId);
@@ -371,7 +375,11 @@ class FlagshipShipping extends CarrierModule
             $flagship = new Flagship($token, $url, 'Prestashop', _PS_VERSION_);
             $payload = $this->getPayloadForShipment($orderId);
             $this->logger->logDebug("Payload for upload shipment: ".json_encode($payload));
-            $updateShipment = $flagship->editShipmentRequest($payload, $shipmentId)->setStoreName($storeName)->setOrderId($orderId);
+            $orderLink = $this->getOrderAdminLink($orderId);
+            $updateShipment = $flagship->editShipmentRequest($payload, $shipmentId)
+                ->setStoreName($storeName)
+                ->setOrderId($orderId)
+                ->setOrderLink($orderLink);
             $updatedShipment = $updateShipment->execute();
             $updatedShipmentId = $updatedShipment->shipment->id;
             return $this->displayConfirmation('Updated! FlagShip Shipment: '.$updatedShipmentId);
@@ -1894,6 +1902,19 @@ class FlagshipShipping extends CarrierModule
             'canadapost' => 'Canada Post',
         ];
         return $labels[$key] ?? Tools::ucwords($name);
+    }
+
+    protected function getOrderAdminLink(int $orderId) : string
+    {
+        return $this->context->link->getAdminLink(
+            'AdminOrders',
+            true,
+            [],
+            [
+                'id_order' => $orderId,
+                'vieworder' => 1,
+            ]
+        );
     }
 
     protected function updateCarrierTrackingTemplates(array $templates) : bool
