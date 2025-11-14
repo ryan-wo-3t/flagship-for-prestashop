@@ -226,6 +226,7 @@ class FlagshipShipping extends CarrierModule
         $output .= $this->renderForm();
         $output .= $this->context->smarty->fetch($this->local_path.'views/templates/admin/boxes.tpl');
         $output .= $this->renderBoxesForm();
+        $output .= $this->renderTrackingLinksForm();
         return $output;
     }
 
@@ -557,6 +558,31 @@ class FlagshipShipping extends CarrierModule
         return $helper->generateForm([$this->getBoxesForm()]);
     }
 
+    protected function renderTrackingLinksForm() : string
+    {
+        $helper = new HelperForm();
+
+        $helper->show_toolbar = false;
+        $helper->table = $this->table;
+        $helper->module = $this;
+        $helper->default_form_language = $this->context->language->id;
+        $helper->allow_employee_form_lang = Configuration::get('PS_BO_ALLOW_EMPLOYEE_FORM_LANG', 0);
+
+        $helper->identifier = $this->identifier;
+        $helper->submit_action = 'submit'.$this->name.'Module';
+        $helper->currentIndex = $this->context->link->getAdminLink('AdminModules', false)
+            .'&configure='.$this->name.'&tab_module='.$this->tab.'&module_name='.$this->name;
+        $helper->token = Tools::getAdminTokenLite('AdminModules');
+
+        $helper->tpl_vars = array(
+            'fields_value' => $this->getTrackingLinksFormValues(),
+            'languages' => $this->context->controller->getLanguages(),
+            'id_language' => $this->context->language->id,
+        );
+
+        return $helper->generateForm([$this->getTrackingLinksForm()]);
+    }
+
     protected function getStoreUnits()
     {
         $units = Configuration::get("PS_DIMENSION_UNIT");
@@ -771,19 +797,6 @@ class FlagshipShipping extends CarrierModule
                         ]
                     ],
                     [
-                        'type' => 'html',
-                        'name' => 'flagship_tracking_url_info',
-                        'html_content' => '<hr><h4>'.$this->l('Carrier Tracking URL Templates').'</h4><p class="text-muted">'.$this->l('Use @ where the tracking number should appear. Leave a field blank to restore the default link.').'</p>'
-                    ],
-                    $this->buildTrackingUrlFormField('purolator', 'Purolator'),
-                    $this->buildTrackingUrlFormField('ups', 'UPS'),
-                    $this->buildTrackingUrlFormField('gls', 'GLS Canada'),
-                    $this->buildTrackingUrlFormField('dhl', 'DHL Express'),
-                    $this->buildTrackingUrlFormField('fedex', 'FedEx'),
-                    $this->buildTrackingUrlFormField('canpar', 'Canpar'),
-                    $this->buildTrackingUrlFormField('nationex', 'Nationex'),
-                    $this->buildTrackingUrlFormField('canadapost', 'Canada Post'),
-                    [
                         'col' => 4,
                         'type' => 'select',
                         'label' => $this->l('Residential Shipments'),
@@ -926,14 +939,14 @@ class FlagshipShipping extends CarrierModule
             'flagship_tracking_email' => Configuration::get('flagship_tracking_email'),
             'flagship_show_box_size' => Configuration::get('flagship_show_box_size'),
             'flagship_show_packing_layers' => Configuration::get('flagship_show_packing_layers'),
-        ] + $this->getTrackingUrlConfigFormValues();
+        ];
     }
 
-    protected function getTrackingUrlConfigFormValues() : array
+    protected function getTrackingLinksFormValues() : array
     {
         $values = [];
-        foreach ($this->getTrackingUrlDefaults() as $carrier => $defaultUrl) {
-            $values['flagship_tracking_url_'.$carrier] = Configuration::get('flagship_tracking_url_'.$carrier);
+        foreach ($this->getTrackingUrlConfig() as $carrier => $template) {
+            $values['flagship_tracking_url_'.$carrier] = $template;
         }
         return $values;
     }
@@ -1739,6 +1752,40 @@ class FlagshipShipping extends CarrierModule
             'canpar' => 'https://www.canpar.com/en/track/track.aspx?reference='.$p,
             'nationex' => 'https://www.nationex.com/en/tracking/?trackingNumber='.$p,
             'canadapost' => 'https://www.canadapost-postescanada.ca/track-reperage/en#/details/'.$p,
+        ];
+    }
+
+    protected function getTrackingLinksForm() : array
+    {
+        return [
+            'form' => [
+                'legend' => [
+                    'title' => $this->l('Carrier Tracking URL Templates'),
+                    'icon' => 'icon-truck',
+                ],
+                'input' => array_merge(
+                    [
+                        [
+                            'type' => 'html',
+                            'name' => 'tracking_urls_info',
+                            'html_content' => '<p class="text-muted mb-3">'.$this->l('Use @ where the tracking number should appear. Leave a field blank to restore the default link.').'</p>'
+                        ],
+                    ],
+                    [
+                        $this->buildTrackingUrlFormField('purolator', 'Purolator'),
+                        $this->buildTrackingUrlFormField('ups', 'UPS'),
+                        $this->buildTrackingUrlFormField('gls', 'GLS Canada'),
+                        $this->buildTrackingUrlFormField('dhl', 'DHL Express'),
+                        $this->buildTrackingUrlFormField('fedex', 'FedEx'),
+                        $this->buildTrackingUrlFormField('canpar', 'Canpar'),
+                        $this->buildTrackingUrlFormField('nationex', 'Nationex'),
+                        $this->buildTrackingUrlFormField('canadapost', 'Canada Post'),
+                    ]
+                ),
+                'submit' => [
+                    'title' => $this->l('Save'),
+                ],
+            ],
         ];
     }
 
