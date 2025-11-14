@@ -2,7 +2,7 @@
 <module>
     <name><![CDATA[flagshipshipping]]></name>
     <displayName><![CDATA[FlagShip For PrestaShop]]></displayName>
-    <version><![CDATA[1.0.267]]></version>
+    <version><![CDATA[1.0.270]]></version>
     <description><![CDATA[Ship orders with FlagShip's SmartShip platform, fetch live courier quotes, and prepare shipments directly inside PrestaShop.]]></description>
     <author><![CDATA[FlagShip Courier Solutions]]></author>
     <tab><![CDATA[shipping_logistics]]></tab>
