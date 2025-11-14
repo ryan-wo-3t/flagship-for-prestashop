@@ -62,7 +62,7 @@
 			</div>
 
 			<div class="btn-group mb-2">
-				{if !$isDeleted && $shipmentFlag}
+				{if $canModifyShipment}
 					<a class="btn btn-default send_to_flagship" id="update_shipment">{l s='Update Shipment' mod='flagshipshipping'}</a>
 					<a class="btn btn-default convert" id="convert_shipment" href="{$url|escape:'htmlall':'UTF-8'}" target="_blank">{l s='Convert Shipment' mod='flagshipshipping'}</a>
 				{/if}

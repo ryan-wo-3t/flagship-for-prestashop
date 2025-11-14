@@ -312,8 +312,10 @@ class FlagshipShipping extends CarrierModule
             }
         }
 
+        $shipmentTrackingNumber = empty($shipmentData) ? '' : ($shipmentData['shipment']->tracking_number ?? '');
         $showBoxSizes = $showBoxSizeToggle && !empty($packedBoxes);
         $showPackingDetails = $showBoxSizes && $showPackingLayersToggle;
+        $canModifyShipment = !$isDeletedShipment && empty($shipmentTrackingNumber) && !$trackingIsFlagship;
         $this->context->smarty->assign(array(
             'url' => $convertUrl,
             'shipmentFlag' => $shipmentFlag,
@@ -322,7 +324,7 @@ class FlagshipShipping extends CarrierModule
             'SMARTSHIP_WEB_URL' => $this->url,
             'orderId' => $id_order,
             'img_dir' => _PS_IMG_DIR_,
-            'trackingNumber' => empty($shipmentData) ? '' : $shipmentData['shipment']->tracking_number,
+            'trackingNumber' => $shipmentTrackingNumber,
             'trackingUrl' => empty($shipmentData) ? '' : $this->getTrackingUrl($shipmentData),
             'packedBoxes' => $packedBoxes,
             'showBoxSizes' => $showBoxSizes,
@@ -331,7 +333,8 @@ class FlagshipShipping extends CarrierModule
             'trackingIsFlagship' => $trackingIsFlagship,
             'trackingCourierName' => $trackingCourierName,
             'trackingShipmentLink' => $trackingShipmentLink,
-            'trackingCarrierLink' => $trackingCarrierLink
+            'trackingCarrierLink' => $trackingCarrierLink,
+            'canModifyShipment' => $canModifyShipment
         ));
 
         return $this->display(__FILE__, 'flagship.tpl');
