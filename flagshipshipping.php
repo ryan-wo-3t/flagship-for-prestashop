@@ -295,6 +295,7 @@ class FlagshipShipping extends CarrierModule
         $convertUrl = '';
         $isNewShipment = is_null($shipmentId);
         $shipmentData = $isNewShipment ? [] : $this->getShipment($shipmentId);
+        $isDeletedShipment = false;
         if (empty($shipmentData) && $trackingIsFlagship) {
             $shipmentData = ['shipment' => $trackingShipment->shipment];
             $isNewShipment = false;
@@ -305,6 +306,15 @@ class FlagshipShipping extends CarrierModule
             }
         } else {
             $isDeletedShipment = !$isNewShipment && empty($shipmentData);
+        }
+
+        if ($isDeletedShipment) {
+            $this->deleteOrderShipment($id_order);
+            $shipmentFlag = 0;
+            $convertUrl = '';
+            $isDeletedShipment = false;
+            $isNewShipment = true;
+            $shipmentData = [];
         }
         if ($shipmentFlag) {
             $convertUrl = $this->url."/shipping/$shipmentFlag/overview";
@@ -412,67 +422,178 @@ class FlagshipShipping extends CarrierModule
         }
 
         $carrier = new Carrier($this->id_carrier);
-        if (isset(Context::getContext()->cookie->rates)) {
-            $rate = explode(",", Context::getContext()->cookie->rate);
-            $couriers = $this->getCouriers($rate);
-            return !in_array($carrier->name, $couriers) ? false : $this->getShippingCost($rate, $carrier);
+        $storedRates = $this->getStoredRatesFromCookie();
+        if (empty($storedRates)) {
+            $token = Configuration::get('flagship_api_token');
+            $url = $this->getBaseUrl();
+            $flagship = new Flagship($token, $url, 'Prestashop', _PS_VERSION_);
+            try {
+                $payload = $this->getPayload($address);
+            } catch (Exception $e) {
+                $this->logger->logError("Unable to build FlagShip payload: ".$e->getMessage());
+                return false;
+            }
+
+            try {
+                $storeName = $this->context->shop->name;
+                $this->logger->logDebug("Quotes payload: ".json_encode($payload));
+                $rates = $flagship->createQuoteRequest($payload)
+                    ->setStoreName($storeName)
+                    ->execute()
+                    ->sortByPrice();
+                $storedRates = $this->prepareRates($rates);
+                $this->storeRatesInCookie($storedRates);
+            } catch (Exception $e) {
+                $this->logger->logError("Unable to fetch FlagShip rates: ".$e->getMessage());
+                return false;
+            }
         }
 
-        $token = Configuration::get('flagship_api_token');
-        $url = $this->getBaseUrl();
-        $flagship = new Flagship($token, $url, 'Prestashop', _PS_VERSION_);
-        try {
-            $payload = $this->getPayload($address);
-        } catch (Exception $e) {
-            $this->logger->logError("Unable to build FlagShip payload: ".$e->getMessage());
+        if (empty($storedRates)) {
             return false;
         }
 
-        if (!isset(Context::getContext()->cookie->rates)) {
-            $storeName = $this->context->shop->name;
-            $this->logger->logDebug("Quotes payload: ".json_encode($payload));
-            $rates = $flagship->createQuoteRequest($payload)->setStoreName($storeName)->execute()->sortByPrice();
-            Context::getContext()->cookie->rates = 1;
-            $ratesArray = $this->prepareRates($rates);
-            $str = $this->getRatesString($ratesArray);
-            Context::getContext()->cookie->rate = $str;
+        $couriers = $this->getCouriers($storedRates);
+        if (!in_array($carrier->name, $couriers, true)) {
+            return false;
         }
 
-        return $shipping_cost;
+        $cost = $this->getShippingCost($storedRates, $carrier);
+        return $cost === false ? false : $cost;
     }
 
     protected function getRatesString(array $ratesArray) : string
     {
-        $str = '';
-        foreach ($ratesArray as $value) {
-            $str .= implode("-", $value).",";
-        }
-        $str = rtrim($str);
-
-        return $str;
+        $encoded = json_encode(array_values($ratesArray));
+        return $encoded === false ? '[]' : $encoded;
     }
 
-    protected function getShippingCost(array $rate, Carrier $carrier) : float
+    protected function getShippingCost(array $rates, Carrier $carrier)
     {
-        $shipping_cost = 0.00;
-        foreach ($rate as $value) {
-            $cost = floatVal(Tools::substr($value, strpos($value, "-")+1));
-            $cost += floatVal((Configuration::get("flagship_markup")/100) * $cost);
-            $cost += floatVal(Configuration::get('flagship_fee'));
-            $shipping_cost=Tools::substr($value, 0, strpos($value, "-")) == $carrier->name ? $cost : $shipping_cost;
+        foreach ($rates as $rate) {
+            $courier = isset($rate['courier']) ? (string)$rate['courier'] : '';
+            if ($courier !== $carrier->name) {
+                continue;
+            }
+            $subtotal = isset($rate['subtotal']) ? (float)$rate['subtotal'] : 0.0;
+            if ($subtotal <= 0) {
+                return false;
+            }
+            $cost = $subtotal;
+            $markup = (float)Configuration::get('flagship_markup');
+            if ($markup !== 0.0) {
+                $cost += ($markup / 100) * $subtotal;
+            }
+            $cost += (float)Configuration::get('flagship_fee');
+            if (isset($rate['taxes'])) {
+                $cost += (float)$rate['taxes'];
+            }
+            return $cost;
         }
 
-        return $shipping_cost;
+        return false;
     }
 
-    protected function getCouriers($rate){
+    protected function getCouriers(array $rates) : array
+    {
         $couriers = [];
-        foreach ($rate as $value) {
-            $service = Tools::substr($value, 0, strpos($value, "-"));
-            $couriers[] = strcasecmp($service, 'FedEx') === 0 ? 'FedEx '.$service : $service;
+        foreach ($rates as $rate) {
+            $courier = isset($rate['courier']) ? trim((string)$rate['courier']) : '';
+            $subtotal = isset($rate['subtotal']) ? (float)$rate['subtotal'] : 0.0;
+            if ($courier === '' || $subtotal <= 0) {
+                continue;
+            }
+            $couriers[] = $courier;
         }
 
-        return $couriers;
+        return array_values(array_unique($couriers));
+    }
+
+    protected function storeRatesInCookie(array $rates) : void
+    {
+        $cookie = Context::getContext()->cookie;
+        if (empty($rates)) {
+            unset($cookie->rates);
+            unset($cookie->rate);
+            return;
+        }
+
+        $cookie->rates = 1;
+        $cookie->rate = $this->getRatesString($rates);
+    }
+
+    protected function getStoredRatesFromCookie() : array
+    {
+        $cookie = Context::getContext()->cookie;
+        if (!isset($cookie->rate) || $cookie->rate === '') {
+            return [];
+        }
+
+        $raw = (string)$cookie->rate;
+        $decoded = json_decode($raw, true);
+        if (json_last_error() === JSON_ERROR_NONE && is_array($decoded)) {
+            return $this->normalizeRateEntries($decoded);
+        }
+
+        return $this->parseLegacyRateFormat($raw);
+    }
+
+    protected function parseLegacyRateFormat(string $raw) : array
+    {
+        $entries = array_filter(array_map('trim', explode(',', $raw)));
+        $parsed = [];
+
+        foreach ($entries as $entry) {
+            $firstDash = strpos($entry, '-');
+            if ($firstDash === false) {
+                continue;
+            }
+            $courier = trim(Tools::substr($entry, 0, $firstDash));
+            $rest = Tools::substr($entry, $firstDash + 1);
+            if ($courier === '' || $rest === false) {
+                continue;
+            }
+
+            $secondDash = strpos($rest, '-');
+            if ($secondDash === false) {
+                $subtotal = (float)$rest;
+                $taxes = 0.0;
+            } else {
+                $subtotal = (float)Tools::substr($rest, 0, $secondDash);
+                $taxes = (float)Tools::substr($rest, $secondDash + 1);
+            }
+
+            $parsed[] = [
+                'courier' => $courier,
+                'subtotal' => $subtotal,
+                'taxes' => $taxes,
+            ];
+        }
+
+        return $this->normalizeRateEntries($parsed);
+    }
+
+    protected function normalizeRateEntries(array $rates) : array
+    {
+        $normalized = [];
+        foreach ($rates as $rate) {
+            if (!is_array($rate)) {
+                continue;
+            }
+            $courier = isset($rate['courier']) ? trim((string)$rate['courier']) : '';
+            $subtotal = isset($rate['subtotal']) ? (float)$rate['subtotal'] : 0.0;
+            $taxes = isset($rate['taxes']) ? (float)$rate['taxes'] : 0.0;
+            if ($courier === '' || $subtotal <= 0) {
+                continue;
+            }
+            $normalized[] = [
+                'courier' => $courier,
+                'subtotal' => $subtotal,
+                'taxes' => $taxes,
+            ];
+        }
+
+        return $normalized;
     }
 
     public function getOrderShippingCostExternal($params) : bool
@@ -1226,9 +1347,7 @@ class FlagshipShipping extends CarrierModule
         $ratesArray = [];
         foreach ($rates as $rate) {
             $ratesArray[] = [
-                "courier" => $rate->getCourierName() == 'FedEx' ?
-                    'FedEx '.$rate->getCourierDescription() :
-                    $rate->getCourierDescription(),
+                "courier" => $rate->getCourierDescription(),
                 "subtotal" => $rate->getSubtotal(),
                 "taxes" => $rate->getTaxesTotal()
             ];
@@ -1701,6 +1820,11 @@ class FlagshipShipping extends CarrierModule
             "flagship_shipment_id" => $shipmentId
         ];
         return Db::getInstance()->insert('flagship_shipping', $data);
+    }
+
+    protected function deleteOrderShipment(int $orderId) : void
+    {
+        Db::getInstance()->delete('flagship_shipping', 'id_order = '.(int)$orderId);
     }
 
     protected function getShipment(int $shipmentId) : array {
