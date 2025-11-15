@@ -133,11 +133,12 @@ class FlagshipShipping extends CarrierModule
             ');
 
         Configuration::updateValue('flagship_show_packing_layers', 0);
+        Configuration::updateValue('flagship_debug_logging', 0);
         foreach ($this->getTrackingUrlDefaults() as $carrier => $template) {
             Configuration::updateValue('flagship_tracking_url_'.$carrier, $template);
         }
 
-        $this->logger->logDebug("Flagship for prestashop installed");
+        $this->logDebug("Flagship for prestashop installed");
         return parent::install();
     }
 
@@ -150,6 +151,7 @@ class FlagshipShipping extends CarrierModule
         Configuration::deleteByName('flagship_residential');
         Configuration::deleteByName('flagship_test_env');
         Configuration::deleteByName('flagship_show_packing_layers');
+        Configuration::deleteByName('flagship_debug_logging');
         foreach (array_keys($this->getTrackingUrlDefaults()) as $carrier) {
             Configuration::deleteByName('flagship_tracking_url_'.$carrier);
         }
@@ -165,7 +167,7 @@ class FlagshipShipping extends CarrierModule
 
         Db::getInstance()->execute('DROP TABLE `'._DB_PREFIX_.'flagship_boxes`');
         Db::getInstance()->execute('DELETE FROM `'._DB_PREFIX_.'carrier` WHERE external_module_name = "flagshipshipping"');
-        $this->logger->logDebug("Flagship for prestashop uninstalled");
+        $this->logDebug("Flagship for prestashop uninstalled");
         return parent::uninstall();
     }
 
@@ -365,7 +367,7 @@ class FlagshipShipping extends CarrierModule
             $storeName = $this->context->shop->name;
             $flagship = new Flagship($token, $url, 'Prestashop', _PS_VERSION_);
             $payload = $this->getPayloadForShipment($orderId);
-            $this->logger->logDebug("Payload for prepare shipment: ".json_encode($payload));
+            $this->logDebug("Payload for prepare shipment: ".json_encode($payload));
             $orderLink = $this->getOrderAdminLink($orderId);
             $prepareShipment = $flagship->prepareShipmentRequest($payload)
                 ->setStoreName($storeName)
@@ -373,7 +375,7 @@ class FlagshipShipping extends CarrierModule
                 ->setOrderLink($orderLink);
             $prepareShipment = $prepareShipment->execute();
             $shipmentId = $prepareShipment->shipment->id;
-            $this->logger->logDebug("Flagship shipment prepared for order id: ".$orderId);
+            $this->logDebug("Flagship shipment prepared for order id: ".$orderId);
             $this->updateOrder($shipmentId, $orderId);
             return $this->displayConfirmation('FlagShip Shipment Prepared : '.$shipmentId);
         } catch (Exception $e) {
@@ -388,7 +390,7 @@ class FlagshipShipping extends CarrierModule
             $storeName = $this->context->shop->name;
             $flagship = new Flagship($token, $url, 'Prestashop', _PS_VERSION_);
             $payload = $this->getPayloadForShipment($orderId);
-            $this->logger->logDebug("Payload for upload shipment: ".json_encode($payload));
+            $this->logDebug("Payload for upload shipment: ".json_encode($payload));
             $orderLink = $this->getOrderAdminLink($orderId);
             $updateShipment = $flagship->editShipmentRequest($payload, $shipmentId)
                 ->setStoreName($storeName)
@@ -423,7 +425,9 @@ class FlagshipShipping extends CarrierModule
 
         $carrier = new Carrier($this->id_carrier);
         $storedRates = $this->getStoredRatesFromCookie();
+        $this->logDebug(sprintf('Evaluating FlagShip rates for carrier "%s". Cached entries: %d', $carrier->name, count($storedRates)));
         if (empty($storedRates)) {
+            $this->logDebug('No cached FlagShip rates found in cookie; requesting new quote.');
             $token = Configuration::get('flagship_api_token');
             $url = $this->getBaseUrl();
             $flagship = new Flagship($token, $url, 'Prestashop', _PS_VERSION_);
@@ -436,13 +440,14 @@ class FlagshipShipping extends CarrierModule
 
             try {
                 $storeName = $this->context->shop->name;
-                $this->logger->logDebug("Quotes payload: ".json_encode($payload));
+                $this->logDebug("Quotes payload: ".json_encode($payload));
                 $rates = $flagship->createQuoteRequest($payload)
                     ->setStoreName($storeName)
                     ->execute()
                     ->sortByPrice();
                 $storedRates = $this->prepareRates($rates);
                 $this->storeRatesInCookie($storedRates);
+                $this->logDebug(sprintf('Stored %d FlagShip rate entries for current cart.', count($storedRates)));
             } catch (Exception $e) {
                 $this->logger->logError("Unable to fetch FlagShip rates: ".$e->getMessage());
                 return false;
@@ -450,16 +455,24 @@ class FlagshipShipping extends CarrierModule
         }
 
         if (empty($storedRates)) {
+            $this->logDebug('FlagShip rate list empty after fetch; no carriers available.');
             return false;
         }
 
         $couriers = $this->getCouriers($storedRates);
         if (!in_array($carrier->name, $couriers, true)) {
+            $this->logDebug(sprintf('Carrier "%s" is not present in FlagShip quote response. Available: %s', $carrier->name, implode(', ', $couriers)));
             return false;
         }
 
         $cost = $this->getShippingCost($storedRates, $carrier);
-        return $cost === false ? false : $cost;
+        if ($cost === false) {
+            $this->logDebug(sprintf('Carrier "%s" returned an invalid or zero subtotal; skipping.', $carrier->name));
+            return false;
+        }
+
+        $this->logDebug(sprintf('Carrier "%s" final cost calculated at %s.', $carrier->name, $cost));
+        return $cost;
     }
 
     protected function getRatesString(array $ratesArray) : string
@@ -515,11 +528,13 @@ class FlagshipShipping extends CarrierModule
         if (empty($rates)) {
             unset($cookie->rates);
             unset($cookie->rate);
+            $this->logDebug('Cleared FlagShip rate cache from cookie.');
             return;
         }
 
         $cookie->rates = 1;
         $cookie->rate = $this->getRatesString($rates);
+        $this->logDebug(sprintf('FlagShip rate cache updated with %d entries.', count($rates)));
     }
 
     protected function getStoredRatesFromCookie() : array
@@ -532,7 +547,9 @@ class FlagshipShipping extends CarrierModule
         $raw = (string)$cookie->rate;
         $decoded = json_decode($raw, true);
         if (json_last_error() === JSON_ERROR_NONE && is_array($decoded)) {
-            return $this->normalizeRateEntries($decoded);
+            $normalized = $this->normalizeRateEntries($decoded);
+            $this->logDebug(sprintf('Read %d FlagShip rate entries from cookie JSON cache.', count($normalized)));
+            return $normalized;
         }
 
         return $this->parseLegacyRateFormat($raw);
@@ -570,7 +587,11 @@ class FlagshipShipping extends CarrierModule
             ];
         }
 
-        return $this->normalizeRateEntries($parsed);
+        $normalized = $this->normalizeRateEntries($parsed);
+        if (!empty($normalized)) {
+            $this->logDebug(sprintf('Parsed %d legacy FlagShip rate entries from cookie.', count($normalized)));
+        }
+        return $normalized;
     }
 
     protected function normalizeRateEntries(array $rates) : array
@@ -949,6 +970,27 @@ class FlagshipShipping extends CarrierModule
                     [
                         'col' => 4,
                         'type' => 'select',
+                        'label' => $this->l('Enable debug logging'),
+                        'name' => 'flagship_debug_logging',
+                        'desc' =>  $this->l('Write detailed diagnostic entries to var/logs/flagship.log. Disable in production.'),
+                        'options' => [
+                            'query' => [
+                                [
+                                    'key' => 0,
+                                    'name' => 'No'
+                                ],
+                                [
+                                    'key' => 1,
+                                    'name' => 'Yes'
+                                ]
+                            ],
+                            'id' => 'key',
+                            'name' => 'name',
+                        ]
+                    ],
+                    [
+                        'col' => 4,
+                        'type' => 'select',
                         'label' => $this->l('Residential Shipments'),
                         'desc' =>  $this->l('Mark all shipments as residential'),
                         'name' => 'flagship_residential',
@@ -1089,6 +1131,7 @@ class FlagshipShipping extends CarrierModule
             'flagship_tracking_email' => Configuration::get('flagship_tracking_email'),
             'flagship_show_box_size' => Configuration::get('flagship_show_box_size'),
             'flagship_show_packing_layers' => Configuration::get('flagship_show_packing_layers'),
+            'flagship_debug_logging' => Configuration::get('flagship_debug_logging'),
         ];
     }
 
@@ -1114,6 +1157,8 @@ class FlagshipShipping extends CarrierModule
         $showBoxSize = $showBoxSize === '' ? (int)Configuration::get('flagship_show_box_size') : (int)$showBoxSize;
         $showPackingLayers = Tools::getValue('flagship_show_packing_layers', Configuration::get('flagship_show_packing_layers'));
         $showPackingLayers = $showPackingLayers === '' ? (int)Configuration::get('flagship_show_packing_layers') : (int)$showPackingLayers;
+        $debugLogging = Tools::getValue('flagship_debug_logging', Configuration::get('flagship_debug_logging'));
+        $debugLogging = $debugLogging === '' ? (int)Configuration::get('flagship_debug_logging') : (int)$debugLogging;
 
         if (is_string(Configuration::get('flagship_fee')) && is_string(Configuration::get('flagship_api_token')) && is_string(Configuration::get('flagship_markup')) ) { //fields exist in db
             $feeFlag = $fee != Configuration::get('flagship_fee') ?
@@ -1134,7 +1179,9 @@ class FlagshipShipping extends CarrierModule
                                 Configuration::updateValue('flagship_show_box_size', $showBoxSize) : 0;
             $showPackingLayers = $showPackingLayers != Configuration::get('flagship_show_packing_layers') ?
                                 Configuration::updateValue('flagship_show_packing_layers', $showPackingLayers) : 0;
-            return $this->displayConfirmation($this->getReturnMessage($apiToken, $testEnv, $feeFlag, $markupFlag, $residentialFlag,$emailOnLabel, $packing, $showBoxSize, $showPackingLayers));
+            $debugLoggingFlag = $debugLogging != Configuration::get('flagship_debug_logging') ?
+                                Configuration::updateValue('flagship_debug_logging', $debugLogging) : 0;
+            return $this->displayConfirmation($this->getReturnMessage($apiToken, $testEnv, $feeFlag, $markupFlag, $residentialFlag,$emailOnLabel, $packing, $showBoxSize, $showPackingLayers, $debugLoggingFlag));
 
         }
 
@@ -1144,13 +1191,14 @@ class FlagshipShipping extends CarrierModule
             $flagship = new Flagship($apiToken, $url, 'Prestashop', _PS_VERSION_);
             $availableServices = $flagship->availableServicesRequest()->setStoreName($storeName)->execute();
             $this->prepareCarriers($availableServices);
+            Configuration::updateValue('flagship_debug_logging', $debugLogging);
 
             return $this->displayConfirmation($this->l('FlagShip Configured'));
         }
         return $this->displayWarning($this->l("Oops! Token is invalid or same token is set."));
     }
 
-    protected function getReturnMessage(string $apiToken, int $testEnv, int $feeFlag, int $markupFlag, int $residentialFlag, int $emailOnLabel, int $packing, int $showBoxSize, int $showPackingLayers) : string
+    protected function getReturnMessage(string $apiToken, int $testEnv, int $feeFlag, int $markupFlag, int $residentialFlag, int $emailOnLabel, int $packing, int $showBoxSize, int $showPackingLayers, int $debugLoggingFlag) : string
     {
         $returnMessage = "<b>";
         $validToken = 0;
@@ -1167,7 +1215,7 @@ class FlagshipShipping extends CarrierModule
             $returnMessage .= "Token not updated! ";
         }
 
-        if($feeFlag || $markupFlag || $residentialFlag || $emailOnLabel || $packing || $showBoxSize || $showPackingLayers){
+        if($feeFlag || $markupFlag || $residentialFlag || $emailOnLabel || $packing || $showBoxSize || $showPackingLayers || $debugLoggingFlag){
             $returnMessage .= "Settings Updated";
         }
 
@@ -1245,6 +1293,19 @@ class FlagshipShipping extends CarrierModule
 
     protected function setTrackingEmail(string $trackingEmail) : int {
         return Configuration::updateValue('flagship_tracking_email', $trackingEmail);
+    }
+
+    protected function isDebugLoggingEnabled() : bool
+    {
+        return (bool)Configuration::get('flagship_debug_logging');
+    }
+
+    protected function logDebug(string $message) : void
+    {
+        if (!$this->isDebugLoggingEnabled()) {
+            return;
+        }
+        $this->logger->logDebug($message);
     }
 
     protected function insertBoxDetails() : string
@@ -1623,9 +1684,9 @@ class FlagshipShipping extends CarrierModule
         ];
 
         try{
-            $this->logger->logDebug("Packing payload (BoxPacker): ".json_encode($packingPayload));
+            $this->logDebug("Packing payload (BoxPacker): ".json_encode($packingPayload));
             $packedItems = $this->packItemsWithBoxPacker($packingItems, $boxes);
-            $this->logger->logDebug("Packing response (BoxPacker): ".json_encode($packedItems));
+            $this->logDebug("Packing response (BoxPacker): ".json_encode($packedItems));
 
             if (count($packedItems) === 0) {
                 return $this->buildPackageStructure($items);
@@ -2185,7 +2246,7 @@ class FlagshipShipping extends CarrierModule
             $shipments = $request->execute();
             return $shipments->getByTrackingNumber($trackingNumber);
         } catch (GetShipmentListException $e) {
-            $this->logger->logDebug("FlagShip tracking lookup empty: ".$e->getMessage());
+            $this->logDebug("FlagShip tracking lookup empty: ".$e->getMessage());
             return null;
         } catch (Exception $e) {
             $this->logger->logError("FlagShip tracking lookup failed: ".$e->getMessage());
