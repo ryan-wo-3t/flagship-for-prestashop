@@ -763,21 +763,7 @@ class FlagshipShipping extends CarrierModule
 
     protected function getPayloadForShipment(int $orderId) : array
     {
-        $from = [
-            "name"=>substr(Configuration::get('PS_SHOP_NAME'),0,29),
-            "attn"=>substr(Configuration::get('PS_SHOP_NAME'),0,20),
-            "address"=>substr(Configuration::get('PS_SHOP_ADDR1'),0,29),
-            "suite"=>substr(Configuration::get('PS_SHOP_ADDR2'),0,17),
-            "city"=>Configuration::get('PS_SHOP_CITY'),
-            "country"=>Country::getIsoById(Configuration::get('PS_SHOP_COUNTRY_ID')),
-            "state"=>$this->getStateCode(
-                (int) Configuration::get('PS_SHOP_STATE_ID'),
-                (int) Configuration::get('PS_SHOP_COUNTRY_ID')
-            ),
-            "postal_code"=>Configuration::get('PS_SHOP_CODE'),
-            "phone"=> Configuration::get('PS_SHOP_PHONE'),
-            "is_commercial"=>true
-        ];
+        $from = $this->buildShopAddressPayload();
 
         $order = new Order($orderId);
         $addressTo = new Address($order->id_address_delivery);
@@ -785,23 +771,12 @@ class FlagshipShipping extends CarrierModule
 
         $products = $order->getProductsDetail();
 
-        $name = empty($addressTo->company) ? $addressTo->firstname : $addressTo->company;
         $isCommercial = Configuration::get('flagship_residential') ? false : true;
         $driverInstructions = Configuration::get('flagship_email_on_label') ? $customer->email : '';
         $trackingEmail =  Configuration::get('flagship_tracking_email') ? $customer->email : Configuration::get('PS_SHOP_EMAIL');
 
-        $to = [
-            "name"=>substr($name,0,29),
-            "attn"=>substr($addressTo->firstname.' '.$addressTo->lastname,0,20),
-            "address"=>substr($addressTo->address1,0,29),
-            "suite"=>substr($addressTo->address2,0,17),
-            "city"=>$addressTo->city,
-            "country"=>Country::getIsoById((int)$addressTo->id_country),
-            "state"=>$this->getStateCode((int)$addressTo->id_state, (int)$addressTo->id_country),
-            "postal_code"=>$addressTo->postcode,
-            "phone"=> $addressTo->phone,
-            "is_commercial"=>$isCommercial
-        ];
+        $to = $this->buildRecipientAddressPayload($addressTo, $customer);
+        $to['is_commercial'] = $isCommercial;
 
         $package = $this->getPackages($order);
 
@@ -1308,6 +1283,93 @@ class FlagshipShipping extends CarrierModule
         $this->logger->logDebug($message);
     }
 
+    protected function buildShopAddressPayload() : array
+    {
+        $shopCountryId = (int)Configuration::get('PS_SHOP_COUNTRY_ID');
+        return [
+            "name" => Tools::substr(Configuration::get('PS_SHOP_NAME'), 0, 29),
+            "attn" => Tools::substr(Configuration::get('PS_SHOP_NAME'), 0, 20),
+            "address" => Tools::substr(Configuration::get('PS_SHOP_ADDR1'), 0, 29),
+            "suite" => Tools::substr(Configuration::get('PS_SHOP_ADDR2'), 0, 17),
+            "city" => Configuration::get('PS_SHOP_CITY'),
+            "country" => $this->resolveCountryIso($shopCountryId),
+            "state" => $this->getStateCode(
+                (int)Configuration::get('PS_SHOP_STATE_ID'),
+                $shopCountryId
+            ),
+            "postal_code" => $this->normalizePostalCode(Configuration::get('PS_SHOP_CODE'), $shopCountryId),
+            "phone" => Configuration::get('PS_SHOP_PHONE'),
+            "email" => Configuration::get('PS_SHOP_EMAIL'),
+            "is_commercial" => true
+        ];
+    }
+
+    protected function buildRecipientAddressPayload(Address $address, ?Customer $customer = null) : array
+    {
+        $fullName = trim($address->firstname.' '.$address->lastname);
+        if ($fullName === '' && $customer instanceof Customer) {
+            $fullName = trim($customer->firstname.' '.$customer->lastname);
+        }
+        $company = trim((string)$address->company);
+        $name = $company !== '' ? $company : ($fullName !== '' ? $fullName : $this->l('Customer'));
+        $attn = $fullName !== '' ? $fullName : $name;
+
+        return [
+            "name" => Tools::substr($name, 0, 29),
+            "attn" => Tools::substr($attn, 0, 20),
+            "address" => Tools::substr((string)$address->address1, 0, 29),
+            "suite" => Tools::substr((string)$address->address2, 0, 17),
+            "city" => $address->city,
+            "country" => $this->resolveCountryIso((int)$address->id_country),
+            "state" => $this->getStateCode((int)$address->id_state, (int)$address->id_country),
+            "postal_code" => $this->normalizePostalCode($address->postcode, (int)$address->id_country),
+            "phone" => $this->resolvePhoneNumber($address),
+            "email" => $this->resolveRecipientEmail($address, $customer),
+            "is_commercial" => Configuration::get('flagship_residential') ? false : true
+        ];
+    }
+
+    protected function resolveCountryIso(int $countryId) : string
+    {
+        if ($countryId <= 0) {
+            return '';
+        }
+
+        return Tools::strtoupper((string) Country::getIsoById($countryId));
+    }
+
+    protected function resolvePhoneNumber(Address $address) : string
+    {
+        if (!empty($address->phone_mobile)) {
+            return $address->phone_mobile;
+        }
+        if (!empty($address->phone)) {
+            return $address->phone;
+        }
+
+        return (string)Configuration::get('PS_SHOP_PHONE');
+    }
+
+    protected function resolveRecipientEmail(Address $address, ?Customer $customer = null) : string
+    {
+        if ($customer instanceof Customer && !empty($customer->email)) {
+            return (string)$customer->email;
+        }
+
+        return (string)Configuration::get('PS_SHOP_EMAIL');
+    }
+
+    protected function normalizePostalCode(string $postalCode, int $countryId) : string
+    {
+        $trimmed = preg_replace('/\s+/', '', Tools::strtoupper($postalCode));
+
+        if ($this->isUnitedStates($countryId)) {
+            return $trimmed;
+        }
+
+        return $trimmed;
+    }
+
     protected function insertBoxDetails() : string
     {
         $length = Tools::getValue('flagship_box_length');
@@ -1546,7 +1608,7 @@ class FlagshipShipping extends CarrierModule
 
     protected function getDefaultStateCode() : string
     {
-        return 'QC';
+        return 'BC';
     }
 
     protected function isUnitedStates(int $countryId) : bool
@@ -1578,25 +1640,18 @@ class FlagshipShipping extends CarrierModule
 
     protected function getPayload(Address $address) : array
     {
+        $from = $this->buildShopAddressPayload();
+        $recipientCustomer = null;
+        if (!empty($address->id_customer)) {
+            $candidate = new Customer((int)$address->id_customer);
+            if (Validate::isLoadedObject($candidate)) {
+                $recipientCustomer = $candidate;
+            }
+        } elseif (Validate::isLoadedObject($this->context->customer)) {
+            $recipientCustomer = $this->context->customer;
+        }
 
-        $from = [
-            "city"=>Configuration::get('PS_SHOP_CITY'),
-            "country"=>Country::getIsoById(Configuration::get('PS_SHOP_COUNTRY_ID')),
-            "state"=>$this->getStateCode(
-                (int) Configuration::get('PS_SHOP_STATE_ID'),
-                (int) Configuration::get('PS_SHOP_COUNTRY_ID')
-            ),
-            "postal_code"=>Configuration::get('PS_SHOP_CODE'),
-            "is_commercial"=>true
-        ];
-
-        $to = [
-            "city"=>$address->city,
-            "country"=>Country::getIsoById($address->id_country),
-            "state"=>$this->getStateCode((int)$address->id_state, (int)$address->id_country),
-            "postal_code"=>$address->postcode,
-            "is_commercial"=> Configuration::get('flagship_residential') ? false : true
-        ];
+        $to = $this->buildRecipientAddressPayload($address, $recipientCustomer);
         $packages = $this->getPackages();
 
         $payment = [
@@ -1606,15 +1661,13 @@ class FlagshipShipping extends CarrierModule
             "address_correction" => true
         ];
 
-        $payload = [
+        return [
             "from" => $from,
             "to" => $to,
             "packages" => $packages,
             "payment" => $payment,
             "options" => $options
         ];
-
-        return $payload;
     }
 
     protected function getBoxes() : array
