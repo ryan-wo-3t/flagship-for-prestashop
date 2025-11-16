@@ -473,11 +473,6 @@ class FlagshipShipping extends CarrierModule
 
         $matchedRate = $this->findMatchingRate($carrier->name, $storedRates);
         if ($matchedRate === null) {
-            $this->logDebug(sprintf(
-                'Carrier "%s" is not present in FlagShip quote response. Available: %s',
-                $carrier->name,
-                implode(', ', $this->getRateDescriptions($storedRates))
-            ));
             return false;
         }
 
