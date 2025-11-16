@@ -473,13 +473,17 @@ class FlagshipShipping extends CarrierModule
             return false;
         }
 
-        $couriers = $this->getCouriers($storedRates);
-        if (!in_array($carrier->name, $couriers, true)) {
-            $this->logDebug(sprintf('Carrier "%s" is not present in FlagShip quote response. Available: %s', $carrier->name, implode(', ', $couriers)));
+        $matchedRate = $this->findMatchingRate($carrier->name, $storedRates);
+        if ($matchedRate === null) {
+            $this->logDebug(sprintf(
+                'Carrier "%s" is not present in FlagShip quote response. Available: %s',
+                $carrier->name,
+                implode(', ', $this->getRateDescriptions($storedRates))
+            ));
             return false;
         }
 
-        $cost = $this->getShippingCost($storedRates, $carrier);
+        $cost = $this->calculateShippingCost($matchedRate, $carrier);
         if ($cost === false) {
             $this->logDebug(sprintf('Carrier "%s" returned an invalid or zero subtotal; skipping.', $carrier->name));
             return false;
@@ -582,44 +586,29 @@ class FlagshipShipping extends CarrierModule
         return $encoded === false ? '[]' : $encoded;
     }
 
-    protected function getShippingCost(array $rates, Carrier $carrier)
+    protected function calculateShippingCost(array $rate, Carrier $carrier)
     {
-        foreach ($rates as $rate) {
-            $courier = isset($rate['courier']) ? (string)$rate['courier'] : '';
-            if (!$this->carrierMatchesRate($carrier->name, $rate)) {
-                continue;
-            }
-            $subtotal = isset($rate['subtotal']) ? (float)$rate['subtotal'] : 0.0;
-            if ($subtotal <= 0) {
-                return false;
-            }
-            $cost = $subtotal;
-            $markup = (float)Configuration::get('flagship_markup');
-            if ($markup !== 0.0) {
-                $cost += ($markup / 100) * $subtotal;
-            }
-            $cost += (float)Configuration::get('flagship_fee');
-            if (isset($rate['taxes'])) {
-                $cost += (float)$rate['taxes'];
-            }
-            $this->updateCarrierTransitDelay($carrier, $rate);
-            return $cost;
+        $rateCopy = $rate;
+        if (!$this->sanitizeRateEntry($rateCopy)) {
+            return false;
+        }
+        $subtotal = $rateCopy['subtotal'];
+        if ($subtotal <= 0) {
+            return false;
         }
 
-        return false;
-    }
-
-    protected function getCouriers(array $rates) : array
-    {
-        $couriers = [];
-        foreach ($rates as $rate) {
-            if (!$this->sanitizeRateEntry($rate)) {
-                continue;
-            }
-            $couriers[] = $rate['courier_key'];
+        $cost = $subtotal;
+        $markup = (float)Configuration::get('flagship_markup');
+        if ($markup !== 0.0) {
+            $cost += ($markup / 100) * $subtotal;
         }
+        $cost += (float)Configuration::get('flagship_fee');
+        if (isset($rateCopy['taxes'])) {
+            $cost += (float)$rateCopy['taxes'];
+        }
+        $this->updateCarrierTransitDelay($carrier, $rateCopy);
 
-        return array_values(array_unique($couriers));
+        return $cost;
     }
 
     protected function sanitizeRateEntry(array &$rate) : bool
@@ -664,6 +653,30 @@ class FlagshipShipping extends CarrierModule
         }
 
         return false;
+    }
+
+    protected function findMatchingRate(string $carrierName, array $rates) : ?array
+    {
+        foreach ($rates as $rate) {
+            if ($this->carrierMatchesRate($carrierName, $rate)) {
+                return $rate;
+            }
+        }
+
+        return null;
+    }
+
+    protected function getRateDescriptions(array $rates) : array
+    {
+        $names = [];
+        foreach ($rates as $rate) {
+            if (!$this->sanitizeRateEntry($rate)) {
+                continue;
+            }
+            $names[] = $rate['courier'];
+        }
+
+        return array_values(array_unique($names));
     }
 
     protected function resolveCarrierKey(string $name) : string
