@@ -560,10 +560,10 @@ class FlagshipShipping extends CarrierModule
         }
 
         if ($min === $max) {
-            return sprintf($this->l('Delivery in %d business days'), $min);
+            return sprintf($this->l('%d Business Days.'), $min);
         }
 
-        return sprintf($this->l('Delivery in %d-%d business days'), $min, $max);
+        return sprintf($this->l('%d-%d Business Days.'), $min, $max);
     }
 
     protected function applyPreparationLeadTime(int $transitDays, int $prepDays) : int
@@ -586,7 +586,7 @@ class FlagshipShipping extends CarrierModule
     {
         foreach ($rates as $rate) {
             $courier = isset($rate['courier']) ? (string)$rate['courier'] : '';
-            if ($courier !== $carrier->name) {
+            if (!$this->carrierMatchesRate($carrier->name, $rate)) {
                 continue;
             }
             $subtotal = isset($rate['subtotal']) ? (float)$rate['subtotal'] : 0.0;
@@ -613,15 +613,51 @@ class FlagshipShipping extends CarrierModule
     {
         $couriers = [];
         foreach ($rates as $rate) {
-            $courier = isset($rate['courier']) ? trim((string)$rate['courier']) : '';
-            $subtotal = isset($rate['subtotal']) ? (float)$rate['subtotal'] : 0.0;
-            if ($courier === '' || $subtotal <= 0) {
+            if (!$this->sanitizeRateEntry($rate)) {
                 continue;
             }
-            $couriers[] = $courier;
+            $couriers[] = $rate['courier_key'];
         }
 
         return array_values(array_unique($couriers));
+    }
+
+    protected function sanitizeRateEntry(array &$rate) : bool
+    {
+        if (!isset($rate['courier'])) {
+            return false;
+        }
+        $rate['courier'] = trim((string)$rate['courier']);
+        if ($rate['courier'] === '') {
+            return false;
+        }
+        if (isset($rate['courier_key']) && $rate['courier_key'] !== '') {
+            $rate['courier_key'] = $this->resolveCarrierKey((string)$rate['courier_key']);
+        } else {
+            $rate['courier_key'] = $this->resolveCarrierKey($rate['courier']);
+        }
+
+        return true;
+    }
+
+    protected function carrierMatchesRate(string $carrierName, array $rate) : bool
+    {
+        $rateCopy = $rate;
+        if (!$this->sanitizeRateEntry($rateCopy)) {
+            return false;
+        }
+
+        $carrierKey = $this->resolveCarrierKey($carrierName);
+        return $rateCopy['courier_key'] === $carrierKey;
+    }
+
+    protected function resolveCarrierKey(string $name) : string
+    {
+        $key = $this->detectCarrierKeyFromName($name);
+        if ($key) {
+            return $key;
+        }
+        return Tools::strtolower(trim($name));
     }
 
     protected function storeRatesInCookie(array $rates) : void
@@ -682,6 +718,7 @@ class FlagshipShipping extends CarrierModule
 
             $parsed[] = [
                 'courier' => $courier,
+                'courier_key' => $this->resolveCarrierKey($courier),
                 'subtotal' => $subtotal,
                 'taxes' => $taxes,
                 'transit_min' => null,
@@ -689,8 +726,7 @@ class FlagshipShipping extends CarrierModule
             ];
         }
 
-        $normalized = $this->normalizeRateEntries($parsed);
-        return $normalized;
+        return $this->normalizeRateEntries($parsed);
     }
 
     protected function normalizeRateEntries(array $rates) : array
@@ -700,19 +736,12 @@ class FlagshipShipping extends CarrierModule
             if (!is_array($rate)) {
                 continue;
             }
-            $courier = isset($rate['courier']) ? trim((string)$rate['courier']) : '';
-            $subtotal = isset($rate['subtotal']) ? (float)$rate['subtotal'] : 0.0;
-            $taxes = isset($rate['taxes']) ? (float)$rate['taxes'] : 0.0;
-            if ($courier === '' || $subtotal <= 0) {
+            if (!$this->sanitizeRateEntry($rate)) {
                 continue;
             }
-            $normalized[] = [
-                'courier' => $courier,
-                'subtotal' => $subtotal,
-                'taxes' => $taxes,
-                'transit_min' => $this->sanitizeTransitValue($rate, 'transit_min'),
-                'transit_max' => $this->sanitizeTransitValue($rate, 'transit_max'),
-            ];
+            $rate['transit_min'] = $this->sanitizeTransitValue($rate, 'transit_min');
+            $rate['transit_max'] = $this->sanitizeTransitValue($rate, 'transit_max');
+            $normalized[] = $rate;
         }
 
         return $normalized;
@@ -1639,6 +1668,7 @@ class FlagshipShipping extends CarrierModule
             $bounds = $this->parseTransitBounds($rate->getTransitTime());
             $ratesArray[] = [
                 "courier" => $rate->getCourierDescription(),
+                "courier_key" => $this->resolveCarrierKey($rate->getCourierDescription()),
                 "subtotal" => $rate->getSubtotal(),
                 "taxes" => $rate->getTaxesTotal(),
                 "transit_min" => $bounds['min'],
