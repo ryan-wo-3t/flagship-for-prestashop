@@ -324,7 +324,7 @@ class FlagshipShipping extends CarrierModule
             $shipmentData = [];
         }
         if ($shipmentFlag) {
-            $convertUrl = $this->url."/shipping/$shipmentFlag/overview";
+            $convertUrl = $this->url."/shipping/$shipmentFlag/convert";
         }
         $packedBoxes = [];
         $showBoxSizeToggle = (bool) Configuration::get('flagship_show_box_size');
@@ -387,7 +387,7 @@ class FlagshipShipping extends CarrierModule
                 'success' => true,
                 'message' => $message,
                 'shipment_id' => $shipmentId,
-                'convert_url' => $this->url."/shipping/$shipmentId/overview",
+                'convert_url' => $this->url."/shipping/$shipmentId/convert",
             ];
         } catch (Exception $e) {
             return [
