@@ -409,6 +409,10 @@ class FlagshipShipping extends CarrierModule
     //do not use return type or argument type
     public function getOrderShippingCost($params, $shipping_cost)
     {
+        if (!$this->isOperational()) {
+            return false;
+        }
+
         if (Cache::isStored('packagesCount') && Cache::retrieve('packagesCount') == 0) {
             return false;
         }
@@ -432,7 +436,6 @@ class FlagshipShipping extends CarrierModule
 
         $carrier = new Carrier($this->id_carrier);
         $storedRates = $this->getStoredRatesFromCookie();
-        $this->logDebug(sprintf('Evaluating FlagShip rates for carrier "%s". Cached entries: %d', $carrier->name, count($storedRates)));
         if (empty($storedRates)) {
             $this->logDebug('No cached FlagShip rates found in cookie; requesting new quote.');
             $token = Configuration::get('flagship_api_token');
@@ -448,10 +451,14 @@ class FlagshipShipping extends CarrierModule
             try {
                 $storeName = $this->context->shop->name;
                 $this->logDebug("Quotes payload: ".json_encode($payload));
+                $startTime = microtime(true);
                 $rates = $flagship->createQuoteRequest($payload)
                     ->setStoreName($storeName)
                     ->execute()
                     ->sortByPrice();
+                $elapsed = microtime(true) - $startTime;
+                $serviceCount = is_object($rates) && method_exists($rates, 'count') ? $rates->count() : 0;
+                $this->logDebug(sprintf('Quote request completed in %.3f seconds with %d services.', $elapsed, $serviceCount));
                 $storedRates = $this->prepareRates($rates);
                 $this->storeRatesInCookie($storedRates);
                 $this->logDebug(sprintf('Stored %d FlagShip rate entries for current cart.', count($storedRates)));
@@ -478,7 +485,6 @@ class FlagshipShipping extends CarrierModule
             return false;
         }
 
-        $this->logDebug(sprintf('Carrier "%s" final cost calculated at %s.', $carrier->name, $cost));
         return $cost;
     }
 
@@ -565,6 +571,11 @@ class FlagshipShipping extends CarrierModule
         return max(0, $transitDays) + max(0, $prepDays);
     }
 
+    protected function isOperational() : bool
+    {
+        return $this->active && Module::isEnabled($this->name);
+    }
+
     protected function getRatesString(array $ratesArray) : string
     {
         $encoded = json_encode(array_values($ratesArray));
@@ -638,9 +649,7 @@ class FlagshipShipping extends CarrierModule
         $raw = (string)$cookie->rate;
         $decoded = json_decode($raw, true);
         if (json_last_error() === JSON_ERROR_NONE && is_array($decoded)) {
-            $normalized = $this->normalizeRateEntries($decoded);
-            $this->logDebug(sprintf('Read %d FlagShip rate entries from cookie JSON cache.', count($normalized)));
-            return $normalized;
+            return $this->normalizeRateEntries($decoded);
         }
 
         return $this->parseLegacyRateFormat($raw);
@@ -681,9 +690,6 @@ class FlagshipShipping extends CarrierModule
         }
 
         $normalized = $this->normalizeRateEntries($parsed);
-        if (!empty($normalized)) {
-            $this->logDebug(sprintf('Parsed %d legacy FlagShip rate entries from cookie.', count($normalized)));
-        }
         return $normalized;
     }
 
@@ -714,7 +720,7 @@ class FlagshipShipping extends CarrierModule
 
     public function getOrderShippingCostExternal($params) : bool
     {
-        return true;
+        return $this->isOperational();
     }
 
     public function hookActionValidateCustomerAddressForm() : bool
@@ -816,7 +822,7 @@ class FlagshipShipping extends CarrierModule
         $helper->token = Tools::getAdminTokenLite('AdminModules');
 
         $helper->tpl_vars = array(
-            'fields_value' => $this->getConfigFormValues(), /* Add values for your inputs */
+            'fields_value' => $this->getBoxesFormValues(),
             'languages' => $this->context->controller->getLanguages(),
             'id_language' => $this->context->language->id,
         );
@@ -1188,6 +1194,18 @@ class FlagshipShipping extends CarrierModule
                     'title' => $this->l('Save'),
                 ]
             ]
+        ];
+    }
+
+    protected function getBoxesFormValues() : array
+    {
+        return [
+            'flagship_box_model' => Tools::getValue('flagship_box_model', ''),
+            'flagship_box_length' => Tools::getValue('flagship_box_length', ''),
+            'flagship_box_width' => Tools::getValue('flagship_box_width', ''),
+            'flagship_box_height' => Tools::getValue('flagship_box_height', ''),
+            'flagship_box_weight' => Tools::getValue('flagship_box_weight', ''),
+            'flagship_box_max_weight' => Tools::getValue('flagship_box_max_weight', ''),
         ];
     }
 
