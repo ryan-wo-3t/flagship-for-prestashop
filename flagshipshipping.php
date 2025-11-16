@@ -71,7 +71,7 @@ class FlagshipShipping extends CarrierModule
         $this->url = SMARTSHIP_WEB_URL;
 
         $this->logger = new FileLogger(0); //0 == debug level, logDebug() won’t work without this.
-        $this->logger->setFilename(_PS_ROOT_DIR_."/var/logs/flagship.log");
+        $this->logger->setFilename(_PS_ROOT_DIR_."/var/logs/flagship_API.log");
 
         /**
          * Set $this->bootstrap to true if your module is compliant with bootstrap (PrestaShop 1.6)
@@ -1232,7 +1232,7 @@ class FlagshipShipping extends CarrierModule
                         'type' => 'select',
                         'label' => $this->l('Enable debug logging'),
                         'name' => 'flagship_debug_logging',
-                        'desc' =>  $this->l('Write detailed diagnostic entries to var/logs/flagship.log. Disable in production.'),
+                        'desc' =>  $this->l('Write detailed diagnostic entries to var/logs/flagship_API.log. Disable in production.'),
                         'options' => [
                             'query' => [
                                 [
