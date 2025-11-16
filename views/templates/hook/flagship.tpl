@@ -25,6 +25,8 @@
 <script type="text/javascript">
 	var orderId = "{$orderId|escape:'htmlall':'UTF-8'}";
 	var shipmentId = "{$shipmentFlag|escape:'htmlall':'UTF-8'}";
+	var convertActionLabel = "{$convertActionLabelText|escape:'javascript'}";
+	var viewShipmentActionLabel = "{$viewShipmentActionLabelText|escape:'javascript'}";
 </script>
 
 <div id="flagshipSendActions" class="{if !$isNew}d-none{/if}">
@@ -58,11 +60,13 @@
 				{/if}
 			</div>
 
-			<div class="btn-group mb-2">
+			<div class="btn-group mb-2 {if $isNew}d-none{/if}" id="flagshipActionsGroup">
 				{if $canModifyShipment}
-					<a class="btn btn-default send_to_flagship" id="update_shipment">{l s='Update Shipment' mod='flagshipshipping'}</a>
-					<a class="btn btn-default convert" id="convert_shipment" href="{$url|escape:'htmlall':'UTF-8'}" target="_blank">{l s='Convert Shipment' mod='flagshipshipping'}</a>
+				<a class="btn btn-default send_to_flagship" id="update_shipment">{l s='Update Shipment' mod='flagshipshipping'}</a>
 				{/if}
+				<a class="btn btn-default convert" id="convert_shipment" href="{$url|escape:'htmlall':'UTF-8'}" target="_blank">
+					{if $convertButtonLabel}{$convertButtonLabel|escape:'htmlall':'UTF-8'}{else}{l s='Convert Shipment' mod='flagshipshipping'}{/if}
+				</a>
 			</div>
 		</div>
 
@@ -153,6 +157,22 @@
 		$("#loading-image").hide();
 	});
 
+	function updateConvertButton(actionUrl, labelText){
+		if (actionUrl) {
+			$('#convert_shipment').attr('href', actionUrl);
+			$('#flagshipShipmentLink').attr('href', actionUrl).removeClass('d-none');
+			$('#flagshipShipmentIdValuePlain').addClass('d-none');
+		} else {
+			$('#flagshipShipmentLink').addClass('d-none');
+			$('#flagshipShipmentIdValuePlain').removeClass('d-none');
+		}
+		var text = labelText && labelText.length ? labelText : convertActionLabel;
+		if ((!labelText || !labelText.length) && actionUrl && /\/overview$/i.test(actionUrl)) {
+			text = viewShipmentActionLabel;
+		}
+		$('#convert_shipment').text(text);
+	}
+
 	$(document).ready(function(){
 		$("#loading-image").hide();
 		$(".send_to_flagship").click(function(e){
@@ -185,15 +205,11 @@
 			  			shipmentId = payload.shipment_id;
 			  			$('#flagshipShipmentIdRow').removeClass('d-none');
 			  			$('#flagshipShipmentIdValue').text(payload.shipment_id);
-			  			$('#flagshipShipmentIdValuePlain').text(payload.shipment_id).toggleClass('d-none', !!payload.convert_url);
+			  			$('#flagshipShipmentIdValuePlain').text(payload.shipment_id);
 			  		}
-			  		if (payload.convert_url) {
-			  			$('#convert_shipment').attr('href', payload.convert_url);
-			  			$('#flagshipShipmentLink').removeClass('d-none').attr('href', payload.convert_url);
-			  		} else {
-			  			$('#flagshipShipmentLink').addClass('d-none');
-			  		}
+			  		updateConvertButton(payload.convert_url || '', payload.action_label || '');
 			  		$('#flagshipShipmentCard').removeClass('d-none');
+			  		$('#flagshipActionsGroup').removeClass('d-none');
 			  		$('#flagshipSendActions').addClass('d-none');
 			  	}
 			  	return 0;

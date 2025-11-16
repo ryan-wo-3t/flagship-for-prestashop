@@ -324,8 +324,9 @@ class FlagshipShipping extends CarrierModule
             $shipmentData = [];
         }
         if ($shipmentFlag) {
-            $convertUrl = $this->url."/shipping/$shipmentFlag/convert";
+            $convertUrl = $this->buildShipmentActionUrl($shipmentFlag, $shipmentData);
         }
+        $convertButtonLabel = $this->getShipmentActionLabel($convertUrl);
         $packedBoxes = [];
         $showBoxSizeToggle = (bool) Configuration::get('flagship_show_box_size');
         $showPackingLayersToggle = (bool) Configuration::get('flagship_show_packing_layers');
@@ -359,7 +360,10 @@ class FlagshipShipping extends CarrierModule
             'trackingCourierName' => $trackingCourierDisplayName,
             'trackingShipmentLink' => $trackingShipmentLink,
             'trackingCarrierLink' => $trackingCarrierLink,
-            'canModifyShipment' => $canModifyShipment
+            'canModifyShipment' => $canModifyShipment,
+            'convertButtonLabel' => $convertButtonLabel,
+            'convertActionLabelText' => $this->l('Convert Shipment'),
+            'viewShipmentActionLabelText' => $this->l('View Shipment')
         ));
 
         return $this->display(__FILE__, 'flagship.tpl');
@@ -368,6 +372,7 @@ class FlagshipShipping extends CarrierModule
     public function prepareShipment(string $token, int $orderId) : array
     {
         $url = $this->getBaseUrl();
+        $this->url = Configuration::get('flagship_test_env') ? SMARTSHIP_TEST_WEB_URL : SMARTSHIP_WEB_URL;
         try {
             $storeName = $this->context->shop->name;
             $flagship = new Flagship($token, $url, 'Prestashop', _PS_VERSION_);
@@ -383,11 +388,16 @@ class FlagshipShipping extends CarrierModule
             $this->logDebug("Flagship shipment prepared for order id: ".$orderId);
             $this->updateOrder($shipmentId, $orderId);
             $message = $this->displayConfirmation('FlagShip Shipment Prepared : '.$shipmentId);
+            $shipmentStatus = method_exists($prepareShipment, 'getStatus') ? (string)$prepareShipment->getStatus() : '';
+            $shipmentData = ['shipment' => $prepareShipment->shipment];
+            $actionUrl = $this->buildShipmentActionUrl($shipmentId, $shipmentData);
             return [
                 'success' => true,
                 'message' => $message,
                 'shipment_id' => $shipmentId,
-                'convert_url' => $this->url."/shipping/$shipmentId/convert",
+                'convert_url' => $actionUrl,
+                'action_label' => $this->getShipmentActionLabel($actionUrl),
+                'shipment_status' => $shipmentStatus,
             ];
         } catch (Exception $e) {
             return [
@@ -395,6 +405,8 @@ class FlagshipShipping extends CarrierModule
                 'message' => $this->displayError($e->getMessage()),
                 'shipment_id' => null,
                 'convert_url' => '',
+                'action_label' => $this->getShipmentActionLabel(''),
+                'shipment_status' => '',
             ];
         }
     }
@@ -717,6 +729,43 @@ class FlagshipShipping extends CarrierModule
         }
 
         return $slug;
+    }
+
+    protected function getShipmentActionLabel(string $actionUrl) : string
+    {
+        if ($actionUrl !== '' && Tools::substr($actionUrl, -8) === 'overview') {
+            return $this->l('View Shipment');
+        }
+        return $this->l('Convert Shipment');
+    }
+
+    protected function buildShipmentActionUrl(int $shipmentId, array $shipmentData) : string
+    {
+        if ($shipmentId <= 0) {
+            return '';
+        }
+        $status = $this->extractShipmentStatus($shipmentData);
+        $path = 'convert';
+        if ($status !== '' && Tools::strtolower($status) !== 'prequoted') {
+            $path = 'overview';
+        }
+        $base = $this->url ?: (Configuration::get('flagship_test_env') ? SMARTSHIP_TEST_WEB_URL : SMARTSHIP_WEB_URL);
+        return sprintf('%s/shipping/%d/%s', $base, $shipmentId, $path);
+    }
+
+    protected function extractShipmentStatus(array $shipmentData) : string
+    {
+        if (isset($shipmentData['shipment']) && is_object($shipmentData['shipment']) && isset($shipmentData['shipment']->status)) {
+            return (string)$shipmentData['shipment']->status;
+        }
+        if (isset($shipmentData['shipment']) && is_array($shipmentData['shipment']) && isset($shipmentData['shipment']['status'])) {
+            return (string)$shipmentData['shipment']['status'];
+        }
+        if (isset($shipmentData['status'])) {
+            return (string)$shipmentData['status'];
+        }
+
+        return '';
     }
 
     protected function shouldFilterCarrierForPoBox(Carrier $carrier, Address $address) : bool
