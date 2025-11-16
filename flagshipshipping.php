@@ -136,6 +136,7 @@ class FlagshipShipping extends CarrierModule
         Configuration::updateValue('flagship_show_packing_layers', 0);
         Configuration::updateValue('flagship_preparation_days', 0);
         Configuration::updateValue('flagship_debug_logging', 0);
+        Configuration::updateValue('flagship_filter_po_box', 0);
         foreach ($this->getTrackingUrlDefaults() as $carrier => $template) {
             Configuration::updateValue('flagship_tracking_url_'.$carrier, $template);
         }
@@ -155,6 +156,7 @@ class FlagshipShipping extends CarrierModule
         Configuration::deleteByName('flagship_show_packing_layers');
         Configuration::deleteByName('flagship_debug_logging');
         Configuration::deleteByName('flagship_preparation_days');
+        Configuration::deleteByName('flagship_filter_po_box');
         foreach (array_keys($this->getTrackingUrlDefaults()) as $carrier) {
             Configuration::deleteByName('flagship_tracking_url_'.$carrier);
         }
@@ -471,6 +473,10 @@ class FlagshipShipping extends CarrierModule
             return false;
         }
 
+        if ($this->shouldFilterCarrierForPoBox($carrier, $address)) {
+            return false;
+        }
+
         $matchedRate = $this->findMatchingRate($carrier->name, $storedRates);
         if ($matchedRate === null) {
             return false;
@@ -700,6 +706,69 @@ class FlagshipShipping extends CarrierModule
         }
 
         return $slug;
+    }
+
+    protected function shouldFilterCarrierForPoBox(Carrier $carrier, Address $address) : bool
+    {
+        if (!(bool)Configuration::get('flagship_filter_po_box')) {
+            return false;
+        }
+        if (!$this->isPoBoxAddress($address)) {
+            return false;
+        }
+        $key = $this->detectCarrierKeyFromName($carrier->name);
+        if ($key === 'canadapost') {
+            return false;
+        }
+        if ($key === null) {
+            return false;
+        }
+        return in_array($key, $this->getPoBoxRestrictedCarrierKeys(), true);
+    }
+
+    protected function getPoBoxRestrictedCarrierKeys() : array
+    {
+        return ['ups', 'fedex', 'canpar', 'purolator', 'dhl', 'gls', 'nationex'];
+    }
+
+    protected function isPoBoxAddress(Address $address) : bool
+    {
+        $fields = [
+            (string)$address->address1,
+            (string)$address->address2,
+            (string)$address->company,
+        ];
+        foreach ($fields as $field) {
+            if ($field === '') {
+                continue;
+            }
+            if ($this->stringLooksLikePoBox($field)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    protected function stringLooksLikePoBox(string $line) : bool
+    {
+        $patterns = [
+            '/\bp(?:ost)?\.?\s*o\.?\s*box\b/i',
+            '/^\s*box\s+\d+/i',
+            '/^\s*bp\s+\d+/i',
+            '/\bbo[iî]te\s+postale\b/i',
+            '/\bcase\s+postale\b/i',
+            '/\bcp\s*\d+\b/i',
+            '/\brural\s+route\b/i',
+            '/\brr\s*\d+\b/i',
+        ];
+        foreach ($patterns as $pattern) {
+            if (preg_match($pattern, $line)) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     protected function executeQuoteApiCall(array $payload, string $storeName, string $apiToken, string $baseUrl) : array
@@ -1256,6 +1325,27 @@ class FlagshipShipping extends CarrierModule
                     ],
                     [
                         'col' => 4,
+                        'type' => 'select',
+                        'label' => $this->l('Filter PO Box-ineligible couriers'),
+                        'desc' =>  $this->l('Hide non-postal FlagShip carriers when the destination appears to be a PO Box.'),
+                        'name' => 'flagship_filter_po_box',
+                        'options' => [
+                            'query' => [
+                                [
+                                    'key' => 0,
+                                    'name' => 'No'
+                                ],
+                                [
+                                    'key' => 1,
+                                    'name' => 'Yes'
+                                ]
+                            ],
+                            'id' => 'key',
+                            'name' => 'name',
+                        ]
+                    ],
+                    [
+                        'col' => 4,
                         'type' => 'text',
                         'label' => $this->l('Preparation lead time (business days)'),
                         'name' => 'flagship_preparation_days',
@@ -1418,6 +1508,7 @@ class FlagshipShipping extends CarrierModule
             'flagship_show_packing_layers' => Configuration::get('flagship_show_packing_layers'),
             'flagship_preparation_days' => Configuration::get('flagship_preparation_days'),
             'flagship_debug_logging' => Configuration::get('flagship_debug_logging'),
+            'flagship_filter_po_box' => Configuration::get('flagship_filter_po_box'),
         ];
     }
 
@@ -1447,6 +1538,8 @@ class FlagshipShipping extends CarrierModule
         $prepDays = $prepDays === '' ? (int)Configuration::get('flagship_preparation_days') : max(0, (int)$prepDays);
         $debugLogging = Tools::getValue('flagship_debug_logging', Configuration::get('flagship_debug_logging'));
         $debugLogging = $debugLogging === '' ? (int)Configuration::get('flagship_debug_logging') : (int)$debugLogging;
+        $filterPoBox = Tools::getValue('flagship_filter_po_box', Configuration::get('flagship_filter_po_box'));
+        $filterPoBox = $filterPoBox === '' ? (int)Configuration::get('flagship_filter_po_box') : (int)$filterPoBox;
 
         if (is_string(Configuration::get('flagship_fee')) && is_string(Configuration::get('flagship_api_token')) && is_string(Configuration::get('flagship_markup')) ) { //fields exist in db
             $feeFlag = $fee != Configuration::get('flagship_fee') ?
@@ -1471,7 +1564,9 @@ class FlagshipShipping extends CarrierModule
                                 Configuration::updateValue('flagship_preparation_days', $prepDays) : 0;
             $debugLoggingFlag = $debugLogging != Configuration::get('flagship_debug_logging') ?
                                 Configuration::updateValue('flagship_debug_logging', $debugLogging) : 0;
-            return $this->displayConfirmation($this->getReturnMessage($apiToken, $testEnv, $feeFlag, $markupFlag, $residentialFlag,$emailOnLabel, $packing, $showBoxSize, $showPackingLayers, $prepDaysFlag, $debugLoggingFlag));
+            $filterPoBoxFlag = $filterPoBox != Configuration::get('flagship_filter_po_box') ?
+                                Configuration::updateValue('flagship_filter_po_box', $filterPoBox) : 0;
+            return $this->displayConfirmation($this->getReturnMessage($apiToken, $testEnv, $feeFlag, $markupFlag, $residentialFlag,$emailOnLabel, $packing, $showBoxSize, $showPackingLayers, $prepDaysFlag, $debugLoggingFlag, $filterPoBoxFlag));
 
         }
 
@@ -1482,6 +1577,7 @@ class FlagshipShipping extends CarrierModule
             $availableServices = $flagship->availableServicesRequest()->setStoreName($storeName)->execute();
             $this->prepareCarriers($availableServices);
             Configuration::updateValue('flagship_debug_logging', $debugLogging);
+            Configuration::updateValue('flagship_filter_po_box', $filterPoBox);
 
             Configuration::updateValue('flagship_preparation_days', $prepDays);
             return $this->displayConfirmation($this->l('FlagShip Configured'));
@@ -1489,7 +1585,7 @@ class FlagshipShipping extends CarrierModule
         return $this->displayWarning($this->l("Oops! Token is invalid or same token is set."));
     }
 
-    protected function getReturnMessage(string $apiToken, int $testEnv, int $feeFlag, int $markupFlag, int $residentialFlag, int $emailOnLabel, int $packing, int $showBoxSize, int $showPackingLayers, int $prepDaysFlag, int $debugLoggingFlag) : string
+    protected function getReturnMessage(string $apiToken, int $testEnv, int $feeFlag, int $markupFlag, int $residentialFlag, int $emailOnLabel, int $packing, int $showBoxSize, int $showPackingLayers, int $prepDaysFlag, int $debugLoggingFlag, int $filterPoBoxFlag) : string
     {
         $returnMessage = "<b>";
         $validToken = 0;
@@ -1506,7 +1602,7 @@ class FlagshipShipping extends CarrierModule
             $returnMessage .= "Token not updated! ";
         }
 
-        if($feeFlag || $markupFlag || $residentialFlag || $emailOnLabel || $packing || $showBoxSize || $showPackingLayers || $prepDaysFlag || $debugLoggingFlag){
+        if($feeFlag || $markupFlag || $residentialFlag || $emailOnLabel || $packing || $showBoxSize || $showPackingLayers || $prepDaysFlag || $debugLoggingFlag || $filterPoBoxFlag){
             $returnMessage .= "Settings Updated";
         }
 
