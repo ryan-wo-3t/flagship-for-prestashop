@@ -1430,7 +1430,6 @@ class FlagshipShipping extends CarrierModule
             ),
             "postal_code" => $this->normalizePostalCode(Configuration::get('PS_SHOP_CODE'), $shopCountryId),
             "phone" => Configuration::get('PS_SHOP_PHONE'),
-            "email" => Configuration::get('PS_SHOP_EMAIL'),
             "is_commercial" => true
         ];
     }
@@ -1455,7 +1454,6 @@ class FlagshipShipping extends CarrierModule
             "state" => $this->getStateCode((int)$address->id_state, (int)$address->id_country),
             "postal_code" => $this->normalizePostalCode($address->postcode, (int)$address->id_country),
             "phone" => $this->resolvePhoneNumber($address),
-            "email" => $this->resolveRecipientEmail($address, $customer),
             "is_commercial" => Configuration::get('flagship_residential') ? false : true
         ];
     }
@@ -1479,15 +1477,6 @@ class FlagshipShipping extends CarrierModule
         }
 
         return (string)Configuration::get('PS_SHOP_PHONE');
-    }
-
-    protected function resolveRecipientEmail(Address $address, ?Customer $customer = null) : string
-    {
-        if ($customer instanceof Customer && !empty($customer->email)) {
-            return (string)$customer->email;
-        }
-
-        return (string)Configuration::get('PS_SHOP_EMAIL');
     }
 
     protected function normalizePostalCode(string $postalCode, int $countryId) : string
