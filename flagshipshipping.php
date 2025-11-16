@@ -365,7 +365,7 @@ class FlagshipShipping extends CarrierModule
         return $this->display(__FILE__, 'flagship.tpl');
     }
 
-    public function prepareShipment(string $token, int $orderId) : string
+    public function prepareShipment(string $token, int $orderId) : array
     {
         $url = $this->getBaseUrl();
         try {
@@ -382,9 +382,20 @@ class FlagshipShipping extends CarrierModule
             $shipmentId = $prepareShipment->shipment->id;
             $this->logDebug("Flagship shipment prepared for order id: ".$orderId);
             $this->updateOrder($shipmentId, $orderId);
-            return $this->displayConfirmation('FlagShip Shipment Prepared : '.$shipmentId);
+            $message = $this->displayConfirmation('FlagShip Shipment Prepared : '.$shipmentId);
+            return [
+                'success' => true,
+                'message' => $message,
+                'shipment_id' => $shipmentId,
+                'convert_url' => $this->url."/shipping/$shipmentId/overview",
+            ];
         } catch (Exception $e) {
-            return $this->displayError($e->getMessage());
+            return [
+                'success' => false,
+                'message' => $this->displayError($e->getMessage()),
+                'shipment_id' => null,
+                'convert_url' => '',
+            ];
         }
     }
 

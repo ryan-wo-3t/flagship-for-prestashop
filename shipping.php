@@ -33,13 +33,17 @@ $action = Tools::getValue('action');
 $updateShipmentId = Tools::getValue('shipment_id');
 
 $apiToken = Configuration::get('flagship_api_token');
+header('Content-Type: application/json');
 
 if ($action === 'update') {
     $update = $flagship->updateShipment($apiToken, $id_order, $updateShipmentId);
-    echo $update;
+    echo json_encode([
+        'success' => true,
+        'message' => $update,
+    ]);
     return 0;
 }
 
-$shipmentId = $flagship->prepareShipment($apiToken, $id_order);
-echo $shipmentId;
+$result = $flagship->prepareShipment($apiToken, $id_order);
+echo json_encode($result);
 return 0;

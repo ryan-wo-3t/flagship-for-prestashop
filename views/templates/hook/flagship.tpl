@@ -27,26 +27,23 @@
 	var shipmentId = "{$shipmentFlag|escape:'htmlall':'UTF-8'}";
 </script>
 
-{if $isNew}
+<div id="flagshipSendActions" class="{if !$isNew}d-none{/if}">
 	<a href="#" class="btn btn-default send_to_flagship" id="send_to_flagship"><i class="icon-truck"></i>Send To FlagShip</a>
-{else}
-<div class="card flagship-shipment mt-3">
+</div>
+<div class="card flagship-shipment mt-3 {if $isNew}d-none{/if}" id="flagshipShipmentCard">
 	<div class="card-body">
 		<div class="d-flex flex-wrap justify-content-between align-items-center">
 			<div>
 				<p class="card-title font-weight-bold mb-1">{l s='FlagShip Shipment' mod='flagshipshipping'}</p>
-				{if $shipmentFlag}
-					<p class="mb-2">
+					<p class="mb-2 {if !$shipmentFlag}d-none{/if}" id="flagshipShipmentIdRow">
 						<strong>{l s='Shipment ID' mod='flagshipshipping'}:</strong>
-						{if !$isDeleted && $url}
-						<a href="{$url|escape:'htmlall':'UTF-8'}" target="_blank" class="shipmentLink">
-							{$shipmentFlag|escape:'htmlall':'UTF-8'}
+						<a href="{$url|escape:'htmlall':'UTF-8'}" target="_blank" class="shipmentLink {if !$url || !$shipmentFlag}d-none{/if}" id="flagshipShipmentLink">
+							<span id="flagshipShipmentIdValue">{$shipmentFlag|escape:'htmlall':'UTF-8'}</span>
 						</a>
-						{else}
-							{$shipmentFlag|escape:'htmlall':'UTF-8'}
-						{/if}
+						<span id="flagshipShipmentIdValuePlain" class="{if $url && $shipmentFlag}d-none{/if}">
+							{if $shipmentFlag}{$shipmentFlag|escape:'htmlall':'UTF-8'}{else}--{/if}
+						</span>
 					</p>
-				{/if}
 
 				{if $trackingIsFlagship}
 					<p class="mb-0">
@@ -101,7 +98,6 @@
 		{/if}
 	</div>
 </div>
-{/if}
 
 {if $showBoxSizes}
 <div class="flagship-packed-boxes card mt-3">
@@ -169,16 +165,45 @@
 			$.ajax({
 			  url : url,
 			  type : 'POST',
+			  dataType : 'json',
 			  data : {
 			  	order_id : orderId,
 			  	shipment_id : shipmentId,
 			  	action : action
 			  },
-
 			  success : function(response){
-			  	$(".response").html(response);
-			  	$("#send_to_flagship").hide();
+			  	var payload = response;
+			  	if (typeof payload !== 'object' || payload === null) {
+			  		$(".response").html(response);
+			  		return 0;
+			  	}
+			  	if (payload.message) {
+			  		$(".response").html(payload.message);
+			  	}
+			  	if (payload.success && action === 'prepare') {
+			  		if (payload.shipment_id) {
+			  			shipmentId = payload.shipment_id;
+			  			$('#flagshipShipmentIdRow').removeClass('d-none');
+			  			$('#flagshipShipmentIdValue').text(payload.shipment_id);
+			  			$('#flagshipShipmentIdValuePlain').text(payload.shipment_id).toggleClass('d-none', !!payload.convert_url);
+			  		}
+			  		if (payload.convert_url) {
+			  			$('#convert_shipment').attr('href', payload.convert_url);
+			  			$('#flagshipShipmentLink').removeClass('d-none').attr('href', payload.convert_url);
+			  		} else {
+			  			$('#flagshipShipmentLink').addClass('d-none');
+			  		}
+			  		$('#flagshipShipmentCard').removeClass('d-none');
+			  		$('#flagshipSendActions').addClass('d-none');
+			  	}
 			  	return 0;
+			  },
+			  error : function(xhr){
+			  	var fallback = xhr.responseText ? xhr.responseText : '{l s='Unable to contact FlagShip. Please try again.' mod='flagshipshipping'}';
+			  	$(".response").html(fallback);
+			  },
+			  complete : function(){
+			  	action = 'prepare';
 			  }
 			});
 		});
