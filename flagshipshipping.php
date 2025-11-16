@@ -40,6 +40,7 @@ if (file_exists(__DIR__ . '/classes/FlagshipPackingItem.php')) {
 use DVDoug\BoxPacker\NoBoxesAvailableException;
 use DVDoug\BoxPacker\Packer;
 use DVDoug\BoxPacker\PackedBoxList;
+use Flagship\Shipping\Collections\RatesCollection;
 use Flagship\Shipping\Exceptions\GetShipmentByIdException;
 use Flagship\Shipping\Exceptions\GetShipmentListException;
 use Flagship\Shipping\Flagship;
@@ -440,7 +441,6 @@ class FlagshipShipping extends CarrierModule
             $this->logDebug('No cached FlagShip rates found in cookie; requesting new quote.');
             $token = Configuration::get('flagship_api_token');
             $url = $this->getBaseUrl();
-            $flagship = new Flagship($token, $url, 'Prestashop', _PS_VERSION_);
             try {
                 $payload = $this->getPayload($address);
             } catch (Exception $e) {
@@ -450,14 +450,12 @@ class FlagshipShipping extends CarrierModule
 
             try {
                 $storeName = $this->context->shop->name;
-                $this->logDebug("Quotes payload: ".json_encode($payload));
-                $startTime = microtime(true);
-                $rates = $flagship->createQuoteRequest($payload)
-                    ->setStoreName($storeName)
-                    ->execute()
-                    ->sortByPrice();
-                $elapsed = microtime(true) - $startTime;
-                $serviceCount = is_object($rates) && method_exists($rates, 'count') ? $rates->count() : 0;
+                $quoteDetails = $this->executeQuoteApiCall($payload, $storeName, $token, $url);
+                /** @var RatesCollection $ratesCollection */
+                $ratesCollection = $quoteDetails['rates'];
+                $rates = $ratesCollection->sortByPrice();
+                $elapsed = $quoteDetails['elapsed'];
+                $serviceCount = (int)$quoteDetails['count'];
                 $this->logDebug(sprintf('Quote request completed in %.3f seconds with %d services.', $elapsed, $serviceCount));
                 $storedRates = $this->prepareRates($rates);
                 $this->storeRatesInCookie($storedRates);
@@ -707,6 +705,87 @@ class FlagshipShipping extends CarrierModule
         }
 
         return $slug;
+    }
+
+    protected function executeQuoteApiCall(array $payload, string $storeName, string $apiToken, string $baseUrl) : array
+    {
+        if ($apiToken === '') {
+            throw new Exception('FlagShip API token missing.');
+        }
+
+        $encodedPayload = json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+        if ($encodedPayload === false) {
+            throw new Exception('Unable to encode FlagShip payload: '.json_last_error_msg());
+        }
+
+        $endpoint = rtrim($baseUrl, '/').'/ship/rates';
+        $headers = [
+            'X-Smartship-Token: '.$apiToken,
+            'Content-Type: application/json',
+            'X-App-Name: Prestashop',
+        ];
+        $trimmedStoreName = trim((string)$storeName);
+        if ($trimmedStoreName !== '') {
+            $headers[] = 'X-Store-Name: '.$trimmedStoreName;
+        }
+
+        $this->logDebug('FlagShip quote request payload: '.$encodedPayload);
+
+        $curl = curl_init($endpoint);
+        $options = [
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_ENCODING => '',
+            CURLOPT_MAXREDIRS => 10,
+            CURLOPT_TIMEOUT => 10,
+            CURLOPT_HTTP_VERSION => CURL_HTTP_VERSION_1_1,
+            CURLOPT_CUSTOMREQUEST => 'POST',
+            CURLOPT_POSTFIELDS => $encodedPayload,
+            CURLOPT_HTTPHEADER => $headers,
+        ];
+
+        curl_setopt_array($curl, $options);
+
+        $startTime = microtime(true);
+        $response = curl_exec($curl);
+        $elapsed = microtime(true) - $startTime;
+        $httpCode = curl_getinfo($curl, CURLINFO_HTTP_CODE);
+        $curlError = $response === false ? curl_error($curl) : '';
+        curl_close($curl);
+
+        $responseLog = $response === false ? sprintf('cURL error: %s', $curlError) : $response;
+        $this->logDebug(sprintf('FlagShip quote response (%.3f seconds, HTTP %d): %s', $elapsed, $httpCode, $responseLog));
+
+        if ($response === false) {
+            throw new Exception('Unable to fetch FlagShip rates: '.$curlError);
+        }
+        if ($httpCode >= 400 || $httpCode === 0 || $httpCode === 209) {
+            throw new Exception(sprintf('FlagShip quote API returned HTTP %d: %s', $httpCode, $response));
+        }
+
+        $decoded = json_decode($response);
+        if (json_last_error() !== JSON_ERROR_NONE) {
+            throw new Exception('Unable to decode FlagShip quote response: '.json_last_error_msg());
+        }
+
+        $contentEntries = [];
+        if (is_object($decoded) && isset($decoded->content)) {
+            if (is_array($decoded->content)) {
+                $contentEntries = $decoded->content;
+            } elseif (is_object($decoded->content)) {
+                foreach ($decoded->content as $entry) {
+                    $contentEntries[] = $entry;
+                }
+            }
+        }
+
+        $ratesCollection = new RatesCollection();
+        $ratesCollection->importRates($contentEntries);
+
+        return [
+            'rates' => $ratesCollection,
+            'elapsed' => $elapsed,
+            'count' => $ratesCollection->count(),
+        ];
     }
 
     protected function stripCarrierAliasPrefix(string $normalizedName) : string
