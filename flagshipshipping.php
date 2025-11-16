@@ -729,7 +729,18 @@ class FlagshipShipping extends CarrierModule
             $headers[] = 'X-Store-Name: '.$trimmedStoreName;
         }
 
-        $this->logDebug('FlagShip quote request payload: '.$encodedPayload);
+        $escapedPayload = str_replace('"', '\"', $encodedPayload);
+        $escapedToken = str_replace('"', '\"', $apiToken);
+        $escapedStoreName = $trimmedStoreName !== '' ? str_replace('"', '\"', $trimmedStoreName) : '';
+        $storeHeaderSnippet = $trimmedStoreName !== '' ? sprintf(' -H "X-Store-Name: %s"', $escapedStoreName) : '';
+        $curlCommand = sprintf(
+            'curl -X POST "%s" -H "X-Smartship-Token: %s" -H "Content-Type: application/json" -H "X-App-Name: Prestashop"%s -d "%s"',
+            $endpoint,
+            $escapedToken,
+            $storeHeaderSnippet,
+            $escapedPayload
+        );
+        $this->logDebug('FlagShip quote CURL: '.$curlCommand);
 
         $curl = curl_init($endpoint);
         $options = [
