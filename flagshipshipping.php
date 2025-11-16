@@ -133,6 +133,7 @@ class FlagshipShipping extends CarrierModule
             ');
 
         Configuration::updateValue('flagship_show_packing_layers', 0);
+        Configuration::updateValue('flagship_preparation_days', 0);
         Configuration::updateValue('flagship_debug_logging', 0);
         foreach ($this->getTrackingUrlDefaults() as $carrier => $template) {
             Configuration::updateValue('flagship_tracking_url_'.$carrier, $template);
@@ -152,6 +153,7 @@ class FlagshipShipping extends CarrierModule
         Configuration::deleteByName('flagship_test_env');
         Configuration::deleteByName('flagship_show_packing_layers');
         Configuration::deleteByName('flagship_debug_logging');
+        Configuration::deleteByName('flagship_preparation_days');
         foreach (array_keys($this->getTrackingUrlDefaults()) as $carrier) {
             Configuration::deleteByName('flagship_tracking_url_'.$carrier);
         }
@@ -411,9 +413,14 @@ class FlagshipShipping extends CarrierModule
             return false;
         }
 
-        $currentController = Context::getContext()->controller->php_self;
+        $currentController = (string) Context::getContext()->controller->php_self;
+        $controllerName = Tools::strtolower($currentController);
 
-        if (str_contains($currentController, 'order-detail')) {
+        if (str_contains($controllerName, 'order-detail')) {
+            return $shipping_cost;
+        }
+
+        if (!$this->shouldQuoteForController($controllerName)) {
             return $shipping_cost;
         }
 
@@ -475,6 +482,89 @@ class FlagshipShipping extends CarrierModule
         return $cost;
     }
 
+    protected function shouldQuoteForController(string $controllerName) : bool
+    {
+        if ($controllerName === '') {
+            return true;
+        }
+
+        $allowedKeywords = ['order', 'cart', 'checkout'];
+        foreach ($allowedKeywords as $keyword) {
+            if (strpos($controllerName, $keyword) !== false) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    protected function updateCarrierTransitDelay(Carrier $carrier, array $rateInfo) : void
+    {
+        $delayText = $this->buildTransitDelayText($rateInfo);
+        if ($delayText === '') {
+            return;
+        }
+
+        $needsUpdate = false;
+        foreach (Language::getLanguages(false) as $lang) {
+            $idLang = (int)$lang['id_lang'];
+            $current = isset($carrier->delay[$idLang]) ? $carrier->delay[$idLang] : '';
+            if ($current !== $delayText) {
+                $carrier->delay[$idLang] = $delayText;
+                $needsUpdate = true;
+            }
+        }
+
+        if ($needsUpdate) {
+            $carrier->update();
+        }
+    }
+
+    protected function buildTransitDelayText(array $rateInfo) : string
+    {
+        $min = isset($rateInfo['transit_min']) ? (int)$rateInfo['transit_min'] : null;
+        $max = isset($rateInfo['transit_max']) ? (int)$rateInfo['transit_max'] : null;
+        if ($min === null && $max === null) {
+            return '';
+        }
+
+        $prep = $this->getPreparationDays();
+        if ($min !== null) {
+            $min = $this->applyPreparationLeadTime($min, $prep);
+        }
+        if ($max !== null) {
+            $max = $this->applyPreparationLeadTime($max, $prep);
+        }
+
+        if ($min === null && $max !== null) {
+            $min = $max;
+        } elseif ($max === null && $min !== null) {
+            $max = $min;
+        }
+
+        if ($min === null || $max === null) {
+            return '';
+        }
+
+        if ($min < 0) {
+            $min = 0;
+        }
+        if ($max < $min) {
+            $max = $min;
+        }
+
+        if ($min === $max) {
+            return sprintf($this->l('Delivery in %d business days'), $min);
+        }
+
+        return sprintf($this->l('Delivery in %d-%d business days'), $min, $max);
+    }
+
+    protected function applyPreparationLeadTime(int $transitDays, int $prepDays) : int
+    {
+        return max(0, $transitDays) + max(0, $prepDays);
+    }
+
     protected function getRatesString(array $ratesArray) : string
     {
         $encoded = json_encode(array_values($ratesArray));
@@ -501,6 +591,7 @@ class FlagshipShipping extends CarrierModule
             if (isset($rate['taxes'])) {
                 $cost += (float)$rate['taxes'];
             }
+            $this->updateCarrierTransitDelay($carrier, $rate);
             return $cost;
         }
 
@@ -584,6 +675,8 @@ class FlagshipShipping extends CarrierModule
                 'courier' => $courier,
                 'subtotal' => $subtotal,
                 'taxes' => $taxes,
+                'transit_min' => null,
+                'transit_max' => null,
             ];
         }
 
@@ -611,6 +704,8 @@ class FlagshipShipping extends CarrierModule
                 'courier' => $courier,
                 'subtotal' => $subtotal,
                 'taxes' => $taxes,
+                'transit_min' => $this->sanitizeTransitValue($rate, 'transit_min'),
+                'transit_max' => $this->sanitizeTransitValue($rate, 'transit_max'),
             ];
         }
 
@@ -965,6 +1060,13 @@ class FlagshipShipping extends CarrierModule
                     ],
                     [
                         'col' => 4,
+                        'type' => 'text',
+                        'label' => $this->l('Preparation lead time (business days)'),
+                        'name' => 'flagship_preparation_days',
+                        'desc' =>  $this->l('Number of business days required before shipment leaves your warehouse.'),
+                    ],
+                    [
+                        'col' => 4,
                         'type' => 'select',
                         'label' => $this->l('Residential Shipments'),
                         'desc' =>  $this->l('Mark all shipments as residential'),
@@ -1106,6 +1208,7 @@ class FlagshipShipping extends CarrierModule
             'flagship_tracking_email' => Configuration::get('flagship_tracking_email'),
             'flagship_show_box_size' => Configuration::get('flagship_show_box_size'),
             'flagship_show_packing_layers' => Configuration::get('flagship_show_packing_layers'),
+            'flagship_preparation_days' => Configuration::get('flagship_preparation_days'),
             'flagship_debug_logging' => Configuration::get('flagship_debug_logging'),
         ];
     }
@@ -1132,6 +1235,8 @@ class FlagshipShipping extends CarrierModule
         $showBoxSize = $showBoxSize === '' ? (int)Configuration::get('flagship_show_box_size') : (int)$showBoxSize;
         $showPackingLayers = Tools::getValue('flagship_show_packing_layers', Configuration::get('flagship_show_packing_layers'));
         $showPackingLayers = $showPackingLayers === '' ? (int)Configuration::get('flagship_show_packing_layers') : (int)$showPackingLayers;
+        $prepDays = Tools::getValue('flagship_preparation_days', Configuration::get('flagship_preparation_days'));
+        $prepDays = $prepDays === '' ? (int)Configuration::get('flagship_preparation_days') : max(0, (int)$prepDays);
         $debugLogging = Tools::getValue('flagship_debug_logging', Configuration::get('flagship_debug_logging'));
         $debugLogging = $debugLogging === '' ? (int)Configuration::get('flagship_debug_logging') : (int)$debugLogging;
 
@@ -1154,9 +1259,11 @@ class FlagshipShipping extends CarrierModule
                                 Configuration::updateValue('flagship_show_box_size', $showBoxSize) : 0;
             $showPackingLayers = $showPackingLayers != Configuration::get('flagship_show_packing_layers') ?
                                 Configuration::updateValue('flagship_show_packing_layers', $showPackingLayers) : 0;
+            $prepDaysFlag = $prepDays != Configuration::get('flagship_preparation_days') ?
+                                Configuration::updateValue('flagship_preparation_days', $prepDays) : 0;
             $debugLoggingFlag = $debugLogging != Configuration::get('flagship_debug_logging') ?
                                 Configuration::updateValue('flagship_debug_logging', $debugLogging) : 0;
-            return $this->displayConfirmation($this->getReturnMessage($apiToken, $testEnv, $feeFlag, $markupFlag, $residentialFlag,$emailOnLabel, $packing, $showBoxSize, $showPackingLayers, $debugLoggingFlag));
+            return $this->displayConfirmation($this->getReturnMessage($apiToken, $testEnv, $feeFlag, $markupFlag, $residentialFlag,$emailOnLabel, $packing, $showBoxSize, $showPackingLayers, $prepDaysFlag, $debugLoggingFlag));
 
         }
 
@@ -1168,12 +1275,13 @@ class FlagshipShipping extends CarrierModule
             $this->prepareCarriers($availableServices);
             Configuration::updateValue('flagship_debug_logging', $debugLogging);
 
+            Configuration::updateValue('flagship_preparation_days', $prepDays);
             return $this->displayConfirmation($this->l('FlagShip Configured'));
         }
         return $this->displayWarning($this->l("Oops! Token is invalid or same token is set."));
     }
 
-    protected function getReturnMessage(string $apiToken, int $testEnv, int $feeFlag, int $markupFlag, int $residentialFlag, int $emailOnLabel, int $packing, int $showBoxSize, int $showPackingLayers, int $debugLoggingFlag) : string
+    protected function getReturnMessage(string $apiToken, int $testEnv, int $feeFlag, int $markupFlag, int $residentialFlag, int $emailOnLabel, int $packing, int $showBoxSize, int $showPackingLayers, int $prepDaysFlag, int $debugLoggingFlag) : string
     {
         $returnMessage = "<b>";
         $validToken = 0;
@@ -1190,7 +1298,7 @@ class FlagshipShipping extends CarrierModule
             $returnMessage .= "Token not updated! ";
         }
 
-        if($feeFlag || $markupFlag || $residentialFlag || $emailOnLabel || $packing || $showBoxSize || $showPackingLayers || $debugLoggingFlag){
+        if($feeFlag || $markupFlag || $residentialFlag || $emailOnLabel || $packing || $showBoxSize || $showPackingLayers || $prepDaysFlag || $debugLoggingFlag){
             $returnMessage .= "Settings Updated";
         }
 
@@ -1283,6 +1391,11 @@ class FlagshipShipping extends CarrierModule
         $this->logger->logDebug($message);
     }
 
+    protected function getPreparationDays() : int
+    {
+        return max(0, (int)Configuration::get('flagship_preparation_days'));
+    }
+
     protected function buildShopAddressPayload() : array
     {
         $shopCountryId = (int)Configuration::get('PS_SHOP_COUNTRY_ID');
@@ -1368,6 +1481,53 @@ class FlagshipShipping extends CarrierModule
         }
 
         return $trimmed;
+    }
+
+    protected function parseTransitBounds($value) : array
+    {
+        $defaults = ['min' => null, 'max' => null];
+
+        if ($value === null || $value === '') {
+            return $defaults;
+        }
+
+        if (is_numeric($value)) {
+            $days = max(0, (int)$value);
+            return ['min' => $days, 'max' => $days];
+        }
+
+        if (is_string($value)) {
+            preg_match_all('/\d+/', $value, $matches);
+            if (empty($matches[0])) {
+                return $defaults;
+            }
+            $numbers = array_map('intval', $matches[0]);
+            return [
+                'min' => max(0, (int)min($numbers)),
+                'max' => max($numbers)
+            ];
+        }
+
+        return $defaults;
+    }
+
+    protected function sanitizeTransitValue(array $rate, string $key) : ?int
+    {
+        if (!isset($rate[$key])) {
+            return null;
+        }
+
+        $value = $rate[$key];
+        if ($value === null || $value === '') {
+            return null;
+        }
+
+        if (!is_numeric($value)) {
+            return null;
+        }
+
+        $int = (int)$value;
+        return $int < 0 ? null : $int;
     }
 
     protected function insertBoxDetails() : string
@@ -1469,10 +1629,13 @@ class FlagshipShipping extends CarrierModule
     {
         $ratesArray = [];
         foreach ($rates as $rate) {
+            $bounds = $this->parseTransitBounds($rate->getTransitTime());
             $ratesArray[] = [
                 "courier" => $rate->getCourierDescription(),
                 "subtotal" => $rate->getSubtotal(),
-                "taxes" => $rate->getTaxesTotal()
+                "taxes" => $rate->getTaxesTotal(),
+                "transit_min" => $bounds['min'],
+                "transit_max" => $bounds['max'],
             ];
         }
         return $ratesArray;
