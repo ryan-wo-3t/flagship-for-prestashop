@@ -19,13 +19,18 @@
  * needs please refer to http://www.prestashop.com for more information.
  */
 
-use DVDoug\BoxPacker\Item;
-
 if (!defined('_PS_VERSION_')) {
     exit;
 }
 
-class FlagshipPackingItem implements Item
+if (!interface_exists('\\DVDoug\\BoxPacker\\Item')) {
+    $flagshipAutoload = dirname(__DIR__).'/vendor/autoload.php';
+    if (file_exists($flagshipAutoload)) {
+        require_once $flagshipAutoload;
+    }
+}
+
+class FlagshipPackingItem implements \DVDoug\BoxPacker\Item
 {
     protected $description;
     protected $width;

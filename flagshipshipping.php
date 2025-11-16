@@ -681,11 +681,59 @@ class FlagshipShipping extends CarrierModule
 
     protected function resolveCarrierKey(string $name) : string
     {
-        $key = $this->detectCarrierKeyFromName($name);
-        if ($key) {
-            return $key;
+        $normalized = Tools::strtolower(trim($name));
+        if ($normalized === '') {
+            return '';
         }
-        return Tools::strtolower(trim($name));
+
+        $normalized = preg_replace('/\s+/', ' ', $normalized);
+        $normalized = preg_replace('/\s*-\s*international$/', '', $normalized);
+        $normalized = $this->stripCarrierAliasPrefix($normalized);
+
+        $slug = preg_replace('/[^a-z0-9]+/', '-', $normalized);
+        $slug = trim($slug, '-');
+
+        if ($slug === '') {
+            $aliasKey = $this->detectCarrierKeyFromName($name);
+            if ($aliasKey) {
+                return $aliasKey;
+            }
+            $fallback = preg_replace('/[^a-z0-9]+/', '-', Tools::strtolower(trim($name)));
+            $fallback = trim($fallback, '-');
+            if ($fallback !== '') {
+                return $fallback;
+            }
+            return 'service';
+        }
+
+        return $slug;
+    }
+
+    protected function stripCarrierAliasPrefix(string $normalizedName) : string
+    {
+        foreach ($this->getCarrierAliasMap() as $aliases) {
+            foreach ($aliases as $alias) {
+                $aliasNormalized = Tools::strtolower(trim($alias));
+                if ($aliasNormalized === '') {
+                    continue;
+                }
+                $length = Tools::strlen($aliasNormalized);
+                if ($length === 0) {
+                    continue;
+                }
+                if (Tools::substr($normalizedName, 0, $length) !== $aliasNormalized) {
+                    continue;
+                }
+                $nextChar = Tools::substr($normalizedName, $length, 1);
+                if ($nextChar !== '' && ctype_alnum($nextChar)) {
+                    continue;
+                }
+
+                return ltrim(Tools::substr($normalizedName, $length), " \t-_.");
+            }
+        }
+
+        return $normalizedName;
     }
 
     protected function storeRatesInCookie(array $rates) : void
