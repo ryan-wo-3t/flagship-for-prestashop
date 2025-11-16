@@ -560,10 +560,10 @@ class FlagshipShipping extends CarrierModule
         }
 
         if ($min === $max) {
-            return sprintf($this->l('%d Business Days.'), $min);
+            return sprintf($this->l('%d Business days.'), $min);
         }
 
-        return sprintf($this->l('%d-%d Business Days.'), $min, $max);
+        return sprintf($this->l('%d-%d Business days.'), $min, $max);
     }
 
     protected function applyPreparationLeadTime(int $transitDays, int $prepDays) : int
@@ -631,6 +631,12 @@ class FlagshipShipping extends CarrierModule
         if ($rate['courier'] === '') {
             return false;
         }
+        $subtotal = isset($rate['subtotal']) ? (float)$rate['subtotal'] : 0.0;
+        if ($subtotal <= 0) {
+            return false;
+        }
+        $rate['subtotal'] = $subtotal;
+        $rate['taxes'] = isset($rate['taxes']) ? (float)$rate['taxes'] : 0.0;
         if (isset($rate['courier_key']) && $rate['courier_key'] !== '') {
             $rate['courier_key'] = $this->resolveCarrierKey((string)$rate['courier_key']);
         } else {
@@ -647,8 +653,17 @@ class FlagshipShipping extends CarrierModule
             return false;
         }
 
+        $carrierSlug = Tools::strtolower(trim($carrierName));
+        if ($carrierSlug === Tools::strtolower($rateCopy['courier'])) {
+            return true;
+        }
+
         $carrierKey = $this->resolveCarrierKey($carrierName);
-        return $rateCopy['courier_key'] === $carrierKey;
+        if ($rateCopy['courier_key'] === $carrierKey) {
+            return true;
+        }
+
+        return false;
     }
 
     protected function resolveCarrierKey(string $name) : string
