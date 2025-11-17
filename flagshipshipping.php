@@ -945,16 +945,49 @@ class FlagshipShipping extends CarrierModule
     {
         $warning = $this->l('Warning: Debug logging captures customer data and your FlagShip API token. Delete the log as soon as you finish troubleshooting.');
         $buttonLabel = $this->l('Delete debug log now');
-        $confirmText = addslashes($this->l('Delete the FlagShip debug log? This action cannot be undone.'));
+        $confirmText = $this->l('Delete the FlagShip debug log? This action cannot be undone.');
         $link = Tools::safeOutput($this->getClearLogUrl());
-        $button = sprintf(
-            '<a href="%s" class="btn btn-sm btn-danger mt-2" onclick="return confirm(\'%s\');">%s</a>',
+        $logPath = Tools::safeOutput($this->getLogFilePath());
+
+        $html = sprintf(
+            '<div class="alert alert-warning mt-2" id="flagship-debug-warning" style="display:none;">
+                <p>%s</p>
+                <p><small>%s: <code>%s</code></small></p>
+                <a href="%s" class="btn btn-sm btn-danger" id="flagship-delete-log">%s</a>
+            </div>',
+            Tools::safeOutput($warning),
+            Tools::safeOutput($this->l('Current log file')),
+            $logPath,
             $link,
-            $confirmText,
             Tools::safeOutput($buttonLabel)
         );
 
-        return sprintf('<div class="alert alert-warning">%s</div>%s', Tools::safeOutput($warning), $button);
+        $script = sprintf(
+            '<script>
+                document.addEventListener("DOMContentLoaded", function () {
+                    var select = document.querySelector("[name=\"flagship_debug_logging\"]");
+                    var warning = document.getElementById("flagship-debug-warning");
+                    var deleteBtn = document.getElementById("flagship-delete-log");
+                    if (select && warning) {
+                        var toggleWarning = function () {
+                            warning.style.display = select.value === "1" ? "" : "none";
+                        };
+                        toggleWarning();
+                        select.addEventListener("change", toggleWarning);
+                    }
+                    if (deleteBtn) {
+                        deleteBtn.addEventListener("click", function (event) {
+                            if (!confirm(%s)) {
+                                event.preventDefault();
+                            }
+                        });
+                    }
+                });
+            </script>',
+            json_encode($confirmText)
+        );
+
+        return $html.$script;
     }
 
     protected function clearFlagshipLogFile() : bool
@@ -1427,6 +1460,11 @@ class FlagshipShipping extends CarrierModule
                         ]
                     ],
                     [
+                        'type' => 'html',
+                        'name' => 'flagship_debug_log_warning',
+                        'html_content' => $this->getDebugLogWarningBlock(),
+                    ],
+                    [
                         'col' => 4,
                         'type' => 'select',
                         'label' => $this->l('Filter PO Box-ineligible couriers'),
@@ -1446,11 +1484,6 @@ class FlagshipShipping extends CarrierModule
                             'id' => 'key',
                             'name' => 'name',
                         ]
-                    ],
-                    [
-                        'type' => 'html',
-                        'name' => 'flagship_debug_log_notice',
-                        'html_content' => $this->getDebugLogWarningBlock(),
                     ],
                     [
                         'col' => 4,
