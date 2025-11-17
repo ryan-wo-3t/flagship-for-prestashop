@@ -71,7 +71,7 @@ class FlagshipShipping extends CarrierModule
         $this->url = SMARTSHIP_WEB_URL;
 
         $this->logger = new FileLogger(0); //0 == debug level, logDebug() won’t work without this.
-        $this->logger->setFilename(_PS_ROOT_DIR_."/var/logs/flagship_API.log");
+        $this->logger->setFilename($this->getLogFilePath());
 
         /**
          * Set $this->bootstrap to true if your module is compliant with bootstrap (PrestaShop 1.6)
@@ -923,6 +923,49 @@ class FlagshipShipping extends CarrierModule
         ];
     }
 
+    protected function getLogFilePath() : string
+    {
+        return _PS_ROOT_DIR_.'/var/logs/flagship_API.log';
+    }
+
+    protected function getClearLogUrl() : string
+    {
+        return $this->context->link->getAdminLink(
+            'AdminModules',
+            true,
+            [],
+            [
+                'configure' => $this->name,
+                'flagship_clear_log' => 1,
+            ]
+        );
+    }
+
+    protected function getDebugLogWarningBlock() : string
+    {
+        $warning = $this->l('Warning: Debug logging captures customer data and your FlagShip API token. Delete the log as soon as you finish troubleshooting.');
+        $buttonLabel = $this->l('Delete debug log now');
+        $confirmText = addslashes($this->l('Delete the FlagShip debug log? This action cannot be undone.'));
+        $link = Tools::safeOutput($this->getClearLogUrl());
+        $button = sprintf(
+            '<a href="%s" class="btn btn-sm btn-danger mt-2" onclick="return confirm(\'%s\');">%s</a>',
+            $link,
+            $confirmText,
+            Tools::safeOutput($buttonLabel)
+        );
+
+        return sprintf('<div class="alert alert-warning">%s</div>%s', Tools::safeOutput($warning), $button);
+    }
+
+    protected function clearFlagshipLogFile() : bool
+    {
+        $path = $this->getLogFilePath();
+        if (file_exists($path)) {
+            return @unlink($path);
+        }
+        return true;
+    }
+
     protected function stripCarrierAliasPrefix(string $normalizedName) : string
     {
         foreach ($this->getCarrierAliasMap() as $aliases) {
@@ -1405,6 +1448,11 @@ class FlagshipShipping extends CarrierModule
                         ]
                     ],
                     [
+                        'type' => 'html',
+                        'name' => 'flagship_debug_log_notice',
+                        'html_content' => $this->getDebugLogWarningBlock(),
+                    ],
+                    [
                         'col' => 4,
                         'type' => 'text',
                         'label' => $this->l('Preparation lead time (business days)'),
@@ -1577,6 +1625,13 @@ class FlagshipShipping extends CarrierModule
      */
     protected function postProcess()
     {
+        if (Tools::getIsset('flagship_clear_log')) {
+            if ($this->clearFlagshipLogFile()) {
+                return $this->displayConfirmation($this->l('FlagShip debug log deleted.'));
+            }
+            return $this->displayError($this->l('Unable to delete FlagShip debug log. Please check file permissions.'));
+        }
+
         $apiToken = empty(Tools::getValue('flagship_api_token')) ?
                 Configuration::get('flagship_api_token') :
                 Tools::getValue('flagship_api_token');
