@@ -138,6 +138,8 @@ class FlagshipShipping extends CarrierModule
         Configuration::updateValue('flagship_preparation_days', 0);
         Configuration::updateValue('flagship_debug_logging', 0);
         Configuration::updateValue('flagship_filter_po_box', 0);
+        Configuration::updateValue('flagship_tracking_email', 0);
+        Configuration::updateValue('flagship_send_shop_tracking_email', 0);
         foreach ($this->getTrackingUrlDefaults() as $carrier => $template) {
             Configuration::updateValue('flagship_tracking_url_'.$carrier, $template);
         }
@@ -158,6 +160,8 @@ class FlagshipShipping extends CarrierModule
         Configuration::deleteByName('flagship_debug_logging');
         Configuration::deleteByName('flagship_preparation_days');
         Configuration::deleteByName('flagship_filter_po_box');
+        Configuration::deleteByName('flagship_tracking_email');
+        Configuration::deleteByName('flagship_send_shop_tracking_email');
         foreach (array_keys($this->getTrackingUrlDefaults()) as $carrier) {
             Configuration::deleteByName('flagship_tracking_url_'.$carrier);
         }
@@ -1449,7 +1453,7 @@ class FlagshipShipping extends CarrierModule
 
         $isCommercial = Configuration::get('flagship_residential') ? false : true;
         $driverInstructions = Configuration::get('flagship_email_on_label') ? $customer->email : '';
-        $trackingEmail =  Configuration::get('flagship_tracking_email') ? $customer->email : Configuration::get('PS_SHOP_EMAIL');
+        $trackingEmail = $this->resolveShipmentTrackingEmails($customer);
 
         $to = $this->buildRecipientAddressPayload($addressTo, $customer);
         $to['is_commercial'] = $isCommercial;
@@ -1717,6 +1721,27 @@ class FlagshipShipping extends CarrierModule
                     [
                         'col' => 4,
                         'type' => 'select',
+                        'label' => $this->l('Send shop email as tracking'),
+                        'desc' =>  $this->l('Include the shop contact email on tracking notifications in addition to the customer.'),
+                        'name' => 'flagship_send_shop_tracking_email',
+                        'options' => [
+                            'query' => [
+                                [
+                                    'key' => 0,
+                                    'name' => 'No'
+                                ],
+                                [
+                                    'key' => 1,
+                                    'name' => 'Yes'
+                                ]
+                            ],
+                            'id' => 'key',
+                            'name' => 'name',
+                        ]
+                    ],
+                    [
+                        'col' => 4,
+                        'type' => 'select',
                         'label' => $this->l('Show customer email on shipping label'),
                         'desc' =>  $this->l('Select if you want to show customer email as reference on the shipping label'),
                         'name' => 'flagship_email_on_label',
@@ -1825,6 +1850,7 @@ class FlagshipShipping extends CarrierModule
             'flagship_email_on_label' => Configuration::get('flagship_email_on_label'),
             'flagship_packing_api' => Configuration::get('flagship_packing_api'),
             'flagship_tracking_email' => Configuration::get('flagship_tracking_email'),
+            'flagship_send_shop_tracking_email' => Configuration::get('flagship_send_shop_tracking_email'),
             'flagship_show_box_size' => Configuration::get('flagship_show_box_size'),
             'flagship_show_packing_layers' => Configuration::get('flagship_show_packing_layers'),
             'flagship_preparation_days' => Configuration::get('flagship_preparation_days'),
@@ -1868,6 +1894,8 @@ class FlagshipShipping extends CarrierModule
         $packing = empty(Tools::getValue('flagship_packing_api')) ? 0 : Tools::getValue('flagship_packing_api');
         $trackingEmail = Tools::getValue('flagship_tracking_email', Configuration::get('flagship_tracking_email'));
         $trackingEmail = $trackingEmail === '' ? (int)Configuration::get('flagship_tracking_email') : (int)$trackingEmail;
+        $sendShopTracking = Tools::getValue('flagship_send_shop_tracking_email', Configuration::get('flagship_send_shop_tracking_email'));
+        $sendShopTracking = $sendShopTracking === '' ? (int)Configuration::get('flagship_send_shop_tracking_email') : (int)$sendShopTracking;
         $showBoxSize = Tools::getValue('flagship_show_box_size', Configuration::get('flagship_show_box_size'));
         $showBoxSize = $showBoxSize === '' ? (int)Configuration::get('flagship_show_box_size') : (int)$showBoxSize;
         $showPackingLayers = Tools::getValue('flagship_show_packing_layers', Configuration::get('flagship_show_packing_layers'));
@@ -1888,15 +1916,17 @@ class FlagshipShipping extends CarrierModule
                                 Configuration::updateValue('flagship_residential', $residential) : 0 ;
             $testEnvFlag = $testEnv != Configuration::get('flagship_test_env') ?
                                 Configuration::updateValue('flagship_test_env', $testEnv) : 0;
-            $emailOnLabel = $emailOnLabel != Configuration::get('flagship_email_on_label') ?
+            $emailOnLabelFlag = $emailOnLabel != Configuration::get('flagship_email_on_label') ?
                                 Configuration::updateValue('flagship_email_on_label', $emailOnLabel) : 0;
-            $trackingEmail = $trackingEmail != Configuration::get('flagship_tracking_email') ?
+            $trackingEmailFlag = $trackingEmail != Configuration::get('flagship_tracking_email') ?
                                 Configuration::updateValue('flagship_tracking_email', $trackingEmail) : 0;
-            $packing = $packing != Configuration::get('flagship_packing_api') ?
+            $shopTrackingFlag = $sendShopTracking != Configuration::get('flagship_send_shop_tracking_email') ?
+                                Configuration::updateValue('flagship_send_shop_tracking_email', $sendShopTracking) : 0;
+            $packingFlag = $packing != Configuration::get('flagship_packing_api') ?
                                 Configuration::updateValue('flagship_packing_api', $packing) : 0;
-            $showBoxSize = $showBoxSize != Configuration::get('flagship_show_box_size') ?
+            $showBoxSizeFlag = $showBoxSize != Configuration::get('flagship_show_box_size') ?
                                 Configuration::updateValue('flagship_show_box_size', $showBoxSize) : 0;
-            $showPackingLayers = $showPackingLayers != Configuration::get('flagship_show_packing_layers') ?
+            $showPackingLayersFlag = $showPackingLayers != Configuration::get('flagship_show_packing_layers') ?
                                 Configuration::updateValue('flagship_show_packing_layers', $showPackingLayers) : 0;
             $prepDaysFlag = $prepDays != Configuration::get('flagship_preparation_days') ?
                                 Configuration::updateValue('flagship_preparation_days', $prepDays) : 0;
@@ -1904,7 +1934,7 @@ class FlagshipShipping extends CarrierModule
                                 Configuration::updateValue('flagship_debug_logging', $debugLogging) : 0;
             $filterPoBoxFlag = $filterPoBox != Configuration::get('flagship_filter_po_box') ?
                                 Configuration::updateValue('flagship_filter_po_box', $filterPoBox) : 0;
-            return $this->displayConfirmation($this->getReturnMessage($apiToken, $testEnv, $feeFlag, $markupFlag, $residentialFlag,$emailOnLabel, $packing, $showBoxSize, $showPackingLayers, $prepDaysFlag, $debugLoggingFlag, $filterPoBoxFlag));
+            return $this->displayConfirmation($this->getReturnMessage($apiToken, $testEnv, $feeFlag, $markupFlag, $residentialFlag, $emailOnLabelFlag, $trackingEmailFlag, $shopTrackingFlag, $packingFlag, $showBoxSizeFlag, $showPackingLayersFlag, $prepDaysFlag, $debugLoggingFlag, $filterPoBoxFlag));
 
         }
 
@@ -1916,6 +1946,8 @@ class FlagshipShipping extends CarrierModule
             $this->prepareCarriers($availableServices);
             Configuration::updateValue('flagship_debug_logging', $debugLogging);
             Configuration::updateValue('flagship_filter_po_box', $filterPoBox);
+            Configuration::updateValue('flagship_tracking_email', $trackingEmail);
+            Configuration::updateValue('flagship_send_shop_tracking_email', $sendShopTracking);
 
             Configuration::updateValue('flagship_preparation_days', $prepDays);
             return $this->displayConfirmation($this->l('FlagShip Configured'));
@@ -1923,7 +1955,7 @@ class FlagshipShipping extends CarrierModule
         return $this->displayWarning($this->l("Oops! Token is invalid or same token is set."));
     }
 
-    protected function getReturnMessage(string $apiToken, int $testEnv, int $feeFlag, int $markupFlag, int $residentialFlag, int $emailOnLabel, int $packing, int $showBoxSize, int $showPackingLayers, int $prepDaysFlag, int $debugLoggingFlag, int $filterPoBoxFlag) : string
+    protected function getReturnMessage(string $apiToken, int $testEnv, int $feeFlag, int $markupFlag, int $residentialFlag, int $emailOnLabelFlag, int $trackingEmailFlag, int $shopTrackingFlag, int $packingFlag, int $showBoxSizeFlag, int $showPackingLayersFlag, int $prepDaysFlag, int $debugLoggingFlag, int $filterPoBoxFlag) : string
     {
         $returnMessage = "<b>";
         $validToken = 0;
@@ -1940,7 +1972,7 @@ class FlagshipShipping extends CarrierModule
             $returnMessage .= "Token not updated! ";
         }
 
-        if($feeFlag || $markupFlag || $residentialFlag || $emailOnLabel || $packing || $showBoxSize || $showPackingLayers || $prepDaysFlag || $debugLoggingFlag || $filterPoBoxFlag){
+        if($feeFlag || $markupFlag || $residentialFlag || $emailOnLabelFlag || $trackingEmailFlag || $shopTrackingFlag || $packingFlag || $showBoxSizeFlag || $showPackingLayersFlag || $prepDaysFlag || $debugLoggingFlag || $filterPoBoxFlag){
             $returnMessage .= "Settings Updated";
         }
 
@@ -2101,6 +2133,31 @@ class FlagshipShipping extends CarrierModule
         }
 
         return (string)Configuration::get('PS_SHOP_PHONE');
+    }
+
+    protected function resolveShipmentTrackingEmails(?Customer $customer) : string
+    {
+        $useCustomerEmail = (int)Configuration::get('flagship_tracking_email') === 1;
+        $includeShopEmail = (int)Configuration::get('flagship_send_shop_tracking_email') === 1;
+        $shopEmail = trim((string)Configuration::get('PS_SHOP_EMAIL'));
+        $customerEmail = $customer instanceof Customer ? trim((string)$customer->email) : '';
+
+        $emails = [];
+        if ($useCustomerEmail && Validate::isEmail($customerEmail)) {
+            $emails[] = $customerEmail;
+        }
+        if ($includeShopEmail && Validate::isEmail($shopEmail) && !in_array($shopEmail, $emails, true)) {
+            $emails[] = $shopEmail;
+        }
+
+        if (empty($emails) && $useCustomerEmail && Validate::isEmail($customerEmail)) {
+            $emails[] = $customerEmail;
+        }
+        if (empty($emails) && $includeShopEmail && Validate::isEmail($shopEmail)) {
+            $emails[] = $shopEmail;
+        }
+
+        return implode(';', $emails);
     }
 
     protected function normalizePostalCode(string $postalCode, int $countryId) : string
