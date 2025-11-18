@@ -1,5 +1,5 @@
-﻿<?php
-$source = 'flagshipshipping-1.0.270.zip';
+<?php
+$source = 'flagshipshipping-1.0.27.zip';
 $zip = new ZipArchive();
 $tmp = sys_get_temp_dir() . DIRECTORY_SEPARATOR . 'pszip' . uniqid() . DIRECTORY_SEPARATOR;
 mkdir($tmp, 0777, true);
@@ -24,3 +24,4 @@ foreach ($entries as $dir) {
     var_dump(in_array($moduleName . '.php', $files));
 }
 ?>
+

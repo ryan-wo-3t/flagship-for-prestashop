@@ -26,6 +26,13 @@
 <div class="panel">
 <div class = "panel-body" style="font-size:15px;">
     	You are using an older version of FlagShip For PrestaShop. Please update to the latest version.
+        {if isset($latestDownloadUrl) && $latestDownloadUrl}
+        <div class="mt-2">
+            <a class="btn btn-primary" href="{$latestDownloadUrl|escape:'htmlall':'UTF-8'}" target="_blank" rel="noopener noreferrer">
+                {l s='Download module zip file' mod='flagshipshipping'}
+            </a>
+        </div>
+        {/if}
     </div>
 </div>
 {/if}

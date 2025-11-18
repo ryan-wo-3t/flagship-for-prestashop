@@ -95,6 +95,7 @@ class FlagshipShipping extends CarrierModule
         $this->registerHook('displayAdminOrderSide');
         $this->registerHook('displayAdminOrderMainBottom');
         $this->registerHook('displayAdminOrderMainBottom2');
+        $this->registerHook('displayBeforeCarrier');
         $this->registerHook('actionValidateCustomerAddressForm');
         $this->registerHook('actionCartSave');
     }
@@ -192,20 +193,84 @@ class FlagshipShipping extends CarrierModule
           CURLOPT_USERAGENT => " ",
         ));
 
-	$response = json_decode(curl_exec($curl),True);
+        $rawResponse = curl_exec($curl);
+        curl_close($curl);
 
-	curl_close($curl);
-	$latestTag = array_key_exists("tag_name",$response) ? Tools::substr($response["tag_name"], 1) : 0;
+        $response = json_decode($rawResponse, true);
+        if (!is_array($response)) {
+            $response = array();
+        }
 
-        $latestTagNumber = strrchr($latestTag,".");
+        $latestTag = array_key_exists('tag_name', $response) ? Tools::substr($response['tag_name'], 1) : '0';
+        $latestTagNumber = strrchr($latestTag, ".");
+        if ($latestTagNumber === false) {
+            $latestTagNumber = $latestTag;
+        }
         $versionNumber = strrchr($this->version, ".");
+        if ($versionNumber === false) {
+            $versionNumber = $this->version;
+        }
 
         $tagMismatch = $latestTagNumber > $versionNumber ? 1 : 0;
+        $latestDownloadUrl = $tagMismatch ? $this->getReleaseZipUrl($response) : '';
 
         $this->context->smarty->assign(array(
-            'tagMismatch' => $tagMismatch
+            'tagMismatch' => $tagMismatch,
+            'latestDownloadUrl' => $latestDownloadUrl,
         ));
         return $this->display(__FILE__,'notification.tpl');
+    }
+
+    public function hookDisplayBeforeCarrier(array $params)
+    {
+        if (!$this->isOperational()) {
+            return '';
+        }
+
+        $storedRates = $this->getStoredRatesFromCookie();
+        if (empty($storedRates)) {
+            return '';
+        }
+
+        $delayLookup = $this->buildTransitDelayLookup($storedRates);
+        if (empty($delayLookup)) {
+            return '';
+        }
+
+        $this->assignTransitDelaysToDeliveryOptions($delayLookup);
+
+        return '';
+    }
+
+    protected function getReleaseZipUrl(array $release) : string
+    {
+        if (!isset($release['assets']) || !is_array($release['assets'])) {
+            return isset($release['zipball_url']) ? (string)$release['zipball_url'] : '';
+        }
+
+        $fallbackUrl = '';
+        foreach ($release['assets'] as $asset) {
+            if (!is_array($asset)) {
+                continue;
+            }
+            $downloadUrl = isset($asset['browser_download_url']) ? trim((string)$asset['browser_download_url']) : '';
+            if ($downloadUrl === '') {
+                continue;
+            }
+            $assetName = isset($asset['name']) ? (string)$asset['name'] : '';
+            if ($assetName !== '' && preg_match('/flagshipshipping.*\.zip$/i', $assetName)) {
+                return $downloadUrl;
+            }
+            if ($fallbackUrl === '') {
+                $fallbackUrl = $downloadUrl;
+            }
+        }
+
+        if ($fallbackUrl !== '') {
+            return $fallbackUrl;
+        }
+
+        return isset($release['zipball_url']) ? (string)$release['zipball_url'] : '';
     }
 
     /**
@@ -530,28 +595,6 @@ class FlagshipShipping extends CarrierModule
         return false;
     }
 
-    protected function updateCarrierTransitDelay(Carrier $carrier, array $rateInfo) : void
-    {
-        $delayText = $this->buildTransitDelayText($rateInfo);
-        if ($delayText === '') {
-            return;
-        }
-
-        $needsUpdate = false;
-        foreach (Language::getLanguages(false) as $lang) {
-            $idLang = (int)$lang['id_lang'];
-            $current = isset($carrier->delay[$idLang]) ? $carrier->delay[$idLang] : '';
-            if ($current !== $delayText) {
-                $carrier->delay[$idLang] = $delayText;
-                $needsUpdate = true;
-            }
-        }
-
-        if ($needsUpdate) {
-            $carrier->update();
-        }
-    }
-
     protected function buildTransitDelayText(array $rateInfo) : string
     {
         $min = isset($rateInfo['transit_min']) ? (int)$rateInfo['transit_min'] : null;
@@ -592,6 +635,133 @@ class FlagshipShipping extends CarrierModule
         return sprintf($this->l('%d-%d Business days.'), $min, $max);
     }
 
+    protected function buildTransitDelayLookup(array $rates) : array
+    {
+        $lookup = [];
+        foreach ($rates as $rate) {
+            if (!is_array($rate)) {
+                continue;
+            }
+            $key = '';
+            if (isset($rate['courier_key']) && $rate['courier_key'] !== '') {
+                $key = (string)$rate['courier_key'];
+            } elseif (isset($rate['courier'])) {
+                $key = $this->resolveCarrierKey((string)$rate['courier']);
+            }
+            if ($key === '') {
+                continue;
+            }
+            $delayText = $this->buildTransitDelayText($rate);
+            if ($delayText === '') {
+                continue;
+            }
+            $lookup[$key] = $delayText;
+        }
+
+        return $lookup;
+    }
+
+    protected function assignTransitDelaysToDeliveryOptions(array $delayLookup) : void
+    {
+        $deliveryOptions = $this->getDeliveryOptionsSnapshot();
+        if (empty($deliveryOptions)) {
+            return;
+        }
+
+        foreach ($deliveryOptions as $key => $option) {
+            if (!is_array($option)) {
+                continue;
+            }
+            $carrierId = isset($option['id']) ? (int)$option['id'] : 0;
+            $delayText = $this->resolveTransitDelayForCarrier($carrierId, $delayLookup);
+            if ($delayText === '') {
+                continue;
+            }
+            $compositeKey = $carrierId > 0 ? $carrierId.',' : '';
+            if ($compositeKey !== '' && array_key_exists($compositeKey, $deliveryOptions)) {
+                $deliveryOptions[$compositeKey]['delay'] = $delayText;
+            } else {
+                $deliveryOptions[$key]['delay'] = $delayText;
+            }
+        }
+
+        $existingDelays = $this->context->smarty->getTemplateVars('delay_times');
+        if (is_array($existingDelays)) {
+            $deliveryOptions = array_merge($existingDelays, $deliveryOptions);
+        }
+
+        $this->context->smarty->assign('delay_times', $deliveryOptions);
+    }
+
+    protected function getDeliveryOptionsSnapshot() : array
+    {
+        if (!class_exists('\PrestaShop\PrestaShop\Adapter\Delivery\DeliveryOptionsFinder')) {
+            return [];
+        }
+        if (!class_exists('\PrestaShop\PrestaShop\Adapter\Product\PriceFormatter')) {
+            return [];
+        }
+
+        $objectPresenter = $this->buildObjectPresenterForTransitDelays();
+        if ($objectPresenter === null) {
+            return [];
+        }
+
+        $priceFormatter = new \PrestaShop\PrestaShop\Adapter\Product\PriceFormatter();
+
+        try {
+            $deliveryOptionsFinder = new \PrestaShop\PrestaShop\Adapter\Delivery\DeliveryOptionsFinder(
+                $this->context,
+                $this->getTranslator(),
+                $objectPresenter,
+                $priceFormatter
+            );
+        } catch (Exception $e) {
+            return [];
+        }
+
+        if (!method_exists($deliveryOptionsFinder, 'getDeliveryOptions')) {
+            return [];
+        }
+
+        $options = $deliveryOptionsFinder->getDeliveryOptions();
+
+        return is_array($options) ? $options : [];
+    }
+
+    protected function buildObjectPresenterForTransitDelays()
+    {
+        if (class_exists('\PrestaShop\PrestaShop\Adapter\ObjectPresenter')) {
+            return new \PrestaShop\PrestaShop\Adapter\ObjectPresenter();
+        }
+        if (class_exists('\PrestaShop\PrestaShop\Adapter\Presenter\Object\ObjectPresenter')) {
+            return new \PrestaShop\PrestaShop\Adapter\Presenter\Object\ObjectPresenter();
+        }
+
+        return null;
+    }
+
+    protected function resolveTransitDelayForCarrier(int $carrierId, array $delayLookup) : string
+    {
+        if ($carrierId <= 0) {
+            return '';
+        }
+        static $carrierCache = [];
+        if (!array_key_exists($carrierId, $carrierCache)) {
+            $carrierCache[$carrierId] = new Carrier($carrierId);
+        }
+        $carrier = $carrierCache[$carrierId];
+        if (!Validate::isLoadedObject($carrier)) {
+            return '';
+        }
+        $key = $this->resolveCarrierKey($carrier->name);
+        if ($key === '' || !isset($delayLookup[$key])) {
+            return '';
+        }
+
+        return $delayLookup[$key];
+    }
+
     protected function applyPreparationLeadTime(int $transitDays, int $prepDays) : int
     {
         return max(0, $transitDays) + max(0, $prepDays);
@@ -628,7 +798,6 @@ class FlagshipShipping extends CarrierModule
         if (isset($rateCopy['taxes'])) {
             $cost += (float)$rateCopy['taxes'];
         }
-        $this->updateCarrierTransitDelay($carrier, $rateCopy);
 
         return $cost;
     }
