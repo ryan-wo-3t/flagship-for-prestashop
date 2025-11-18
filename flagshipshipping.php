@@ -1162,10 +1162,14 @@ class FlagshipShipping extends CarrierModule
     protected function clearFlagshipLogFile() : bool
     {
         $path = $this->getLogFilePath();
-        if (file_exists($path)) {
-            return @unlink($path);
+        if (!file_exists($path)) {
+            return true;
         }
-        return true;
+        if (!is_writable($path)) {
+            return false;
+        }
+
+        return file_put_contents($path, '') !== false;
     }
 
     protected function stripCarrierAliasPrefix(string $normalizedName) : string
