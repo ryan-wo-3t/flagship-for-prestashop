@@ -412,6 +412,21 @@ class FlagshipShipping extends CarrierModule
         }
 
         $shipmentTrackingNumber = empty($shipmentData) ? '' : ($shipmentData['shipment']->tracking_number ?? '');
+        $trackingSynced = false;
+        if ($shipmentTrackingNumber !== '' && Validate::isLoadedObject($order)) {
+            $trackingSynced = $this->syncOrderTrackingNumber($order, $shipmentTrackingNumber);
+            if ($trackingSynced) {
+                $orderTrackingNumber = $shipmentTrackingNumber;
+                $trackingIsFlagship = true;
+                $shipmentDisplayId = $shipmentFlag ?: (isset($shipmentData['shipment']->id) ? (int)$shipmentData['shipment']->id : 0);
+                $trackingShipmentLink = $shipmentDisplayId ? $this->getFlagshipShipmentDashboardUrl($shipmentDisplayId) : '';
+                $trackingCarrierLink = empty($shipmentData) ? '' : $this->getTrackingUrl($shipmentData);
+                if (isset($shipmentData['shipment']->service->courier_name)) {
+                    $trackingCourierName = (string)$shipmentData['shipment']->service->courier_name;
+                    $trackingCourierDisplayName = $trackingCourierName ? $this->getCarrierDisplayName($trackingCourierName) : '';
+                }
+            }
+        }
         $showBoxSizes = $showBoxSizeToggle && !empty($packedBoxes);
         $showPackingDetails = $showBoxSizes && $showPackingLayersToggle;
         $canModifyShipment = !$isDeletedShipment && empty($shipmentTrackingNumber) && !$trackingIsFlagship;
@@ -2981,6 +2996,48 @@ class FlagshipShipping extends CarrierModule
     protected function deleteOrderShipment(int $orderId) : void
     {
         Db::getInstance()->delete('flagship_shipping', 'id_order = '.(int)$orderId);
+    }
+
+    protected function syncOrderTrackingNumber(Order $order, string $trackingNumber) : bool
+    {
+        $trackingNumber = trim((string)$trackingNumber);
+        if ($trackingNumber === '') {
+            return false;
+        }
+
+        $existingTracking = $this->getOrderTrackingNumber($order);
+        if ($existingTracking === $trackingNumber) {
+            return false;
+        }
+
+        $order->shipping_number = $trackingNumber;
+        Db::getInstance()->update(
+            'orders',
+            ['shipping_number' => pSQL($trackingNumber)],
+            'id_order = '.(int)$order->id
+        );
+
+        $carrierUpdated = false;
+        if (method_exists($order, 'getIdOrderCarrier')) {
+            $idOrderCarrier = (int)$order->getIdOrderCarrier();
+            if ($idOrderCarrier > 0) {
+                $orderCarrier = new OrderCarrier($idOrderCarrier);
+                if (Validate::isLoadedObject($orderCarrier)) {
+                    $orderCarrier->tracking_number = $trackingNumber;
+                    $carrierUpdated = (bool)$orderCarrier->update();
+                }
+            }
+        }
+
+        if (!$carrierUpdated) {
+            Db::getInstance()->update(
+                'order_carrier',
+                ['tracking_number' => pSQL($trackingNumber)],
+                'id_order = '.(int)$order->id
+            );
+        }
+
+        return true;
     }
 
     protected function getShipment(int $shipmentId) : array {
