@@ -1200,17 +1200,39 @@ class FlagshipShipping extends CarrierModule
         return $html.$script;
     }
 
-    protected function clearFlagshipLogFile() : bool
+    protected function clearFlagshipLogFile() : array
     {
         $path = $this->getLogFilePath();
+        $successMessage = $this->l('FlagShip debug log deleted.');
+        $emptyMessage = $this->l('FlagShip debug log is already empty.');
+        $errorMessage = $this->l('Unable to delete FlagShip debug log. Please check file permissions.');
+
         if (!file_exists($path)) {
-            return true;
-        }
-        if (!is_writable($path)) {
-            return false;
+            return [
+                'success' => true,
+                'message' => $emptyMessage,
+            ];
         }
 
-        return file_put_contents($path, '') !== false;
+        if (!is_file($path)) {
+            return [
+                'success' => false,
+                'message' => $errorMessage,
+            ];
+        }
+
+        $result = @file_put_contents($path, '');
+        if ($result === false) {
+            return [
+                'success' => false,
+                'message' => $errorMessage,
+            ];
+        }
+
+        return [
+            'success' => true,
+            'message' => $successMessage,
+        ];
     }
 
     protected function stripCarrierAliasPrefix(string $normalizedName) : string
@@ -1873,10 +1895,10 @@ class FlagshipShipping extends CarrierModule
     protected function postProcess()
     {
         if (Tools::getIsset('flagship_clear_log')) {
-            $success = $this->clearFlagshipLogFile();
-            $message = $success
-                ? $this->l('FlagShip debug log deleted.')
-                : $this->l('Unable to delete FlagShip debug log. Please check file permissions.');
+            $clearResult = $this->clearFlagshipLogFile();
+            $success = isset($clearResult['success']) ? (bool)$clearResult['success'] : false;
+            $message = isset($clearResult['message']) ? (string)$clearResult['message'] : '';
+
             if (Tools::getIsset('ajax')) {
                 header('Content-Type: application/json');
                 echo json_encode([
