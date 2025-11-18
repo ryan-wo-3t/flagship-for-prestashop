@@ -1123,6 +1123,7 @@ class FlagshipShipping extends CarrierModule
                 <p>%s</p>
                 <p><small>%s: <code>%s</code></small></p>
                 <a href="%s" class="btn btn-sm btn-danger" id="flagship-delete-log">%s</a>
+                <div id="flagship-log-flash" class="mt-2" style="display:none;"></div>
             </div>',
             Tools::safeOutput($warning),
             Tools::safeOutput($this->l('Current log file')),
@@ -1137,6 +1138,20 @@ class FlagshipShipping extends CarrierModule
                     var select = document.querySelector("[name=\"flagship_debug_logging\"]");
                     var warning = document.getElementById("flagship-debug-warning");
                     var deleteBtn = document.getElementById("flagship-delete-log");
+                    var flash = document.getElementById("flagship-log-flash");
+                    var confirmMessage = %s;
+                    var defaultError = %s;
+                    var loadingText = %s;
+                    var fallbackSuccess = %s;
+                    var showFlash = function (type, text) {
+                        if (!flash) {
+                            alert(text);
+                            return;
+                        }
+                        flash.className = "alert alert-" + type + " mt-2";
+                        flash.textContent = text;
+                        flash.style.display = "";
+                    };
                     if (select && warning) {
                         var toggleWarning = function () {
                             warning.style.display = select.value === "1" ? "" : "none";
@@ -1146,14 +1161,40 @@ class FlagshipShipping extends CarrierModule
                     }
                     if (deleteBtn) {
                         deleteBtn.addEventListener("click", function (event) {
-                            if (!confirm(%s)) {
+                            if (!confirm(confirmMessage)) {
                                 event.preventDefault();
+                                return;
                             }
+                            event.preventDefault();
+                            showFlash("info", loadingText);
+                            var ajaxUrl = deleteBtn.getAttribute("href");
+                            ajaxUrl += (ajaxUrl.indexOf("?") === -1 ? "?" : "&") + "ajax=1";
+                            fetch(ajaxUrl, {
+                                method: "POST",
+                                credentials: "same-origin",
+                                headers: {
+                                    "X-Requested-With": "XMLHttpRequest"
+                                }
+                            }).then(function (response) {
+                                if (!response.ok) {
+                                    throw new Error(response.statusText);
+                                }
+                                return response.json();
+                            }).then(function (payload) {
+                                var success = payload && payload.success;
+                                var message = payload && payload.message ? payload.message : (success ? fallbackSuccess : defaultError);
+                                showFlash(success ? "success" : "danger", message);
+                            }).catch(function () {
+                                showFlash("danger", defaultError);
+                            });
                         });
                     }
                 });
             </script>',
-            json_encode($confirmText)
+            json_encode($confirmText),
+            json_encode($this->l('Unable to delete FlagShip debug log. Please check file permissions.')),
+            json_encode($this->l('Deleting FlagShip debug log...')),
+            json_encode($this->l('FlagShip debug log deleted.'))
         );
 
         return $html.$script;
@@ -1832,10 +1873,20 @@ class FlagshipShipping extends CarrierModule
     protected function postProcess()
     {
         if (Tools::getIsset('flagship_clear_log')) {
-            if ($this->clearFlagshipLogFile()) {
-                return $this->displayConfirmation($this->l('FlagShip debug log deleted.'));
+            $success = $this->clearFlagshipLogFile();
+            $message = $success
+                ? $this->l('FlagShip debug log deleted.')
+                : $this->l('Unable to delete FlagShip debug log. Please check file permissions.');
+            if (Tools::getIsset('ajax')) {
+                header('Content-Type: application/json');
+                echo json_encode([
+                    'success' => $success,
+                    'message' => $message,
+                ]);
+                exit;
             }
-            return $this->displayError($this->l('Unable to delete FlagShip debug log. Please check file permissions.'));
+
+            return $success ? $this->displayConfirmation($message) : $this->displayError($message);
         }
 
         $apiToken = empty(Tools::getValue('flagship_api_token')) ?
