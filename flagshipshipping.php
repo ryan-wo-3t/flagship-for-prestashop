@@ -60,6 +60,9 @@ class FlagshipShipping extends CarrierModule
     protected $boxPackingWasUsed = false;
     protected $orderBlockRendered = false;
     protected const TRACKING_PLACEHOLDER = '@';
+    protected const CARRIER_CODES_KEY_PREFIX = 'FG_CARR_CODE_';
+    protected $carrierServiceCodesCache = [];
+    protected $carrierServiceCodeSyncAttempted = false;
 
     public function __construct()
     {
@@ -172,10 +175,11 @@ class FlagshipShipping extends CarrierModule
         $rows = Db::getInstance()->executeS($query);
 
         if (count($rows) == 0) {
-            Db::getInstance()->execute('DROP TABLE `'._DB_PREFIX_.'flagship_shipping`');
-        }
+        Db::getInstance()->execute('DROP TABLE `'._DB_PREFIX_.'flagship_shipping`');
+    }
 
         Db::getInstance()->execute('DROP TABLE `'._DB_PREFIX_.'flagship_boxes`');
+        $this->purgeCarrierServiceCodes();
         Db::getInstance()->execute('DELETE FROM `'._DB_PREFIX_.'carrier` WHERE external_module_name = "flagshipshipping"');
         $this->logDebug("Flagship for prestashop uninstalled");
         return parent::uninstall();
@@ -569,7 +573,7 @@ class FlagshipShipping extends CarrierModule
             return false;
         }
 
-        $matchedRate = $this->findMatchingRate($carrier->name, $storedRates);
+        $matchedRate = $this->findMatchingRate($carrier, $storedRates);
         if ($matchedRate === null) {
             return false;
         }
@@ -770,34 +774,133 @@ class FlagshipShipping extends CarrierModule
         } else {
             $rate['courier_key'] = $this->resolveCarrierKey($rate['courier']);
         }
+        $rate['courier_code'] = isset($rate['courier_code'])
+            ? Tools::strtolower(trim((string)$rate['courier_code']))
+            : '';
+        $rate['flagship_code'] = isset($rate['flagship_code'])
+            ? Tools::strtolower(trim((string)$rate['flagship_code']))
+            : '';
 
         return true;
     }
 
-    protected function carrierMatchesRate(string $carrierName, array $rate) : bool
+    protected function getCarrierServiceCodes(Carrier $carrier) : array
     {
-        $rateCopy = $rate;
-        if (!$this->sanitizeRateEntry($rateCopy)) {
+        $cacheKey = (int)$carrier->id;
+        if (isset($this->carrierServiceCodesCache[$cacheKey])) {
+            return $this->carrierServiceCodesCache[$cacheKey];
+        }
+
+        $default = ['courier_code' => '', 'flagship_code' => ''];
+        $configKey = $this->buildCarrierCodesKey($carrier->id);
+        $stored = Configuration::get($configKey);
+        if (($stored === false || $stored === '') && !$this->carrierServiceCodeSyncAttempted) {
+            $this->attemptCarrierServiceCodeSync();
+            $stored = Configuration::get($configKey);
+        }
+        if ($stored === false || $stored === '') {
+            $this->carrierServiceCodesCache[$cacheKey] = $default;
+            return $default;
+        }
+
+        $decoded = json_decode($stored, true);
+        if (!is_array($decoded)) {
+            $this->carrierServiceCodesCache[$cacheKey] = $default;
+            return $default;
+        }
+
+        $courierCode = isset($decoded['courier_code']) ? Tools::strtolower(trim((string)$decoded['courier_code'])) : '';
+        $flagshipCode = isset($decoded['flagship_code']) ? Tools::strtolower(trim((string)$decoded['flagship_code'])) : '';
+        $this->carrierServiceCodesCache[$cacheKey] = [
+            'courier_code' => $courierCode,
+            'flagship_code' => $flagshipCode,
+        ];
+
+        return $this->carrierServiceCodesCache[$cacheKey];
+    }
+
+    protected function rememberCarrierServiceCodesFromRate(Carrier $carrier, array $rate) : void
+    {
+        $courierCode = isset($rate['courier_code']) ? $rate['courier_code'] : '';
+        $flagshipCode = isset($rate['flagship_code']) ? $rate['flagship_code'] : '';
+        $this->rememberCarrierServiceCodes($carrier, $courierCode, $flagshipCode);
+    }
+
+    protected function rememberCarrierServiceCodes(Carrier $carrier, string $courierCode, string $flagshipCode) : void
+    {
+        $courierCode = Tools::strtolower(trim($courierCode));
+        $flagshipCode = Tools::strtolower(trim($flagshipCode));
+        if ($courierCode === '' && $flagshipCode === '') {
+            return;
+        }
+        $cacheKey = (int)$carrier->id;
+        $data = [
+            'courier_code' => $courierCode,
+            'flagship_code' => $flagshipCode,
+        ];
+        $this->carrierServiceCodesCache[$cacheKey] = $data;
+        Configuration::updateValue($this->buildCarrierCodesKey($carrier->id), json_encode($data));
+    }
+
+    protected function buildCarrierCodesKey(int $carrierId) : string
+    {
+        return self::CARRIER_CODES_KEY_PREFIX.(int)$carrierId;
+    }
+
+    protected function namesMatch(string $carrierName, string $rateName) : bool
+    {
+        $carrierNormalized = Tools::strtolower(trim($carrierName));
+        $rateNormalized = Tools::strtolower(trim($rateName));
+        if ($carrierNormalized === '' || $rateNormalized === '') {
             return false;
         }
 
-        $carrierSlug = Tools::strtolower(trim($carrierName));
-        if ($carrierSlug === Tools::strtolower($rateCopy['courier'])) {
+        return $carrierNormalized === $rateNormalized;
+    }
+
+    protected function rateMatchesCarrierCodes(array $rate, array $carrierCodes) : bool
+    {
+        $rateCourierCode = isset($rate['courier_code']) ? $rate['courier_code'] : '';
+        $rateFlagshipCode = isset($rate['flagship_code']) ? $rate['flagship_code'] : '';
+
+        if ($carrierCodes['courier_code'] !== '' && $rateCourierCode !== '' &&
+            $carrierCodes['courier_code'] === $rateCourierCode) {
             return true;
         }
 
-        $carrierKey = $this->resolveCarrierKey($carrierName);
-        if ($rateCopy['courier_key'] === $carrierKey) {
+        if ($carrierCodes['flagship_code'] !== '' && $rateFlagshipCode !== '' &&
+            $carrierCodes['flagship_code'] === $rateFlagshipCode) {
             return true;
         }
 
         return false;
     }
 
-    protected function findMatchingRate(string $carrierName, array $rates) : ?array
+    protected function carrierMatchesRate(Carrier $carrier, array $rate) : bool
+    {
+        $rateCopy = $rate;
+        if (!$this->sanitizeRateEntry($rateCopy)) {
+            return false;
+        }
+
+        if ($this->namesMatch($carrier->name, $rateCopy['courier'])) {
+            $this->rememberCarrierServiceCodesFromRate($carrier, $rateCopy);
+            return true;
+        }
+
+        $carrierCodes = $this->getCarrierServiceCodes($carrier);
+        if ($this->rateMatchesCarrierCodes($rateCopy, $carrierCodes)) {
+            $this->rememberCarrierServiceCodesFromRate($carrier, $rateCopy);
+            return true;
+        }
+
+        return false;
+    }
+
+    protected function findMatchingRate(Carrier $carrier, array $rates) : ?array
     {
         foreach ($rates as $rate) {
-            if ($this->carrierMatchesRate($carrierName, $rate)) {
+            if ($this->carrierMatchesRate($carrier, $rate)) {
                 return $rate;
             }
         }
@@ -1944,6 +2047,7 @@ class FlagshipShipping extends CarrierModule
             $flagship = new Flagship($apiToken, $url, 'Prestashop', _PS_VERSION_);
             $availableServices = $flagship->availableServicesRequest()->setStoreName($storeName)->execute();
             $this->prepareCarriers($availableServices);
+            $this->synchronizeCarrierServiceCodesFromAvailableServices($availableServices);
             Configuration::updateValue('flagship_debug_logging', $debugLogging);
             Configuration::updateValue('flagship_filter_po_box', $filterPoBox);
             Configuration::updateValue('flagship_tracking_email', $trackingEmail);
@@ -2318,9 +2422,13 @@ class FlagshipShipping extends CarrierModule
         $ratesArray = [];
         foreach ($rates as $rate) {
             $bounds = $this->parseTransitBounds($rate->getTransitTime());
+            $courierCode = Tools::strtolower(trim((string)$rate->getServiceCode()));
+            $flagshipCode = Tools::strtolower(trim((string)$rate->getFlagshipCode()));
             $ratesArray[] = [
                 "courier" => $rate->getCourierDescription(),
                 "courier_key" => $this->resolveCarrierKey($rate->getCourierDescription()),
+                "courier_code" => $courierCode,
+                "flagship_code" => $flagshipCode,
                 "subtotal" => $rate->getSubtotal(),
                 "taxes" => $rate->getTaxesTotal(),
                 "transit_min" => $bounds['min'],
@@ -2376,12 +2484,94 @@ class FlagshipShipping extends CarrierModule
         if ($carrier->add() == true) {
             @copy(dirname(__FILE__).'/views/img/'.$img.'.png', _PS_SHIP_IMG_DIR_.'/'.(int)$carrier->id.'.jpg');
             Configuration::updateValue($this->name, (int)$carrier->id);
+            $this->rememberCarrierServiceCodesForService($carrier, $availableService);
 
             $this->id_carrier = (int)$carrier->id;
             return $carrier;
         }
 
         return false;
+    }
+
+    protected function rememberCarrierServiceCodesForService(Carrier $carrier, \Flagship\Shipping\Objects\Service $service) : void
+    {
+        $courierCode = Tools::strtolower(trim((string)$service->getCode()));
+        $flagshipCode = Tools::strtolower(trim((string)$service->getFlagshipCode()));
+        $this->rememberCarrierServiceCodes($carrier, $courierCode, $flagshipCode);
+    }
+
+    protected function synchronizeCarrierServiceCodesFromAvailableServices($availableServices) : void
+    {
+        if (!is_iterable($availableServices)) {
+            return;
+        }
+
+        $serviceMap = [];
+        foreach ($availableServices as $service) {
+            if (!is_object($service) || !method_exists($service, 'getDescription')) {
+                continue;
+            }
+            $nameKey = Tools::strtolower(trim((string)$service->getDescription()));
+            if ($nameKey === '') {
+                continue;
+            }
+            $serviceMap[$nameKey] = [
+                'courier_code' => Tools::strtolower(trim((string)$service->getCode())),
+                'flagship_code' => Tools::strtolower(trim((string)$service->getFlagshipCode())),
+            ];
+        }
+        if (empty($serviceMap)) {
+            return;
+        }
+
+        $languageId = (int)$this->context->language->id;
+        $carrierRows = Carrier::getCarriers(
+            $languageId,
+            false,
+            false,
+            false,
+            null,
+            Carrier::ALL_CARRIERS
+        );
+        $seen = [];
+        foreach ($carrierRows as $row) {
+            if (isset($row['external_module_name']) && $row['external_module_name'] !== $this->name) {
+                continue;
+            }
+            $carrierId = (int)$row['id_carrier'];
+            if (isset($seen[$carrierId])) {
+                continue;
+            }
+            $seen[$carrierId] = true;
+            $carrier = new Carrier($carrierId);
+            $nameKey = Tools::strtolower(trim($carrier->name));
+            if ($nameKey === '' || !isset($serviceMap[$nameKey])) {
+                continue;
+            }
+            $codes = $serviceMap[$nameKey];
+            $this->rememberCarrierServiceCodes($carrier, $codes['courier_code'], $codes['flagship_code']);
+        }
+    }
+
+    protected function attemptCarrierServiceCodeSync() : void
+    {
+        if ($this->carrierServiceCodeSyncAttempted) {
+            return;
+        }
+        $this->carrierServiceCodeSyncAttempted = true;
+        $token = (string)Configuration::get('flagship_api_token');
+        if ($token === '') {
+            return;
+        }
+        $url = $this->getBaseUrl();
+        try {
+            $flagship = new Flagship($token, $url, 'Prestashop', _PS_VERSION_);
+            $storeName = $this->context->shop->name;
+            $availableServices = $flagship->availableServicesRequest()->setStoreName($storeName)->execute();
+            $this->synchronizeCarrierServiceCodesFromAvailableServices($availableServices);
+        } catch (Exception $e) {
+            $this->logDebug('Unable to sync carrier service codes: '.$e->getMessage());
+        }
     }
 
     protected function addGroups(Carrier $carrier) : int
@@ -3106,6 +3296,32 @@ class FlagshipShipping extends CarrierModule
             }
         }
         return $updated;
+    }
+
+    protected function purgeCarrierServiceCodes() : void
+    {
+        $this->carrierServiceCodesCache = [];
+        $languageId = (int)$this->context->language->id;
+        $carrierRows = Carrier::getCarriers(
+            $languageId,
+            false,
+            false,
+            false,
+            null,
+            Carrier::ALL_CARRIERS
+        );
+        $seen = [];
+        foreach ($carrierRows as $row) {
+            $carrierId = (int)$row['id_carrier'];
+            if (isset($seen[$carrierId])) {
+                continue;
+            }
+            $seen[$carrierId] = true;
+            if (isset($row['external_module_name']) && $row['external_module_name'] !== $this->name) {
+                continue;
+            }
+            Configuration::deleteByName($this->buildCarrierCodesKey($carrierId));
+        }
     }
 
     protected function getOrderTrackingNumber(Order $order) : string
