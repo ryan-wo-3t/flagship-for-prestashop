@@ -237,7 +237,7 @@ class FlagshipShipping extends CarrierModule
             return '';
         }
 
-        $this->assignTransitDelaysToDeliveryOptions($delayLookup);
+        $this->applyTransitDelaysToDeliveryOptions($params, $delayLookup);
 
         return '';
     }
@@ -661,105 +661,49 @@ class FlagshipShipping extends CarrierModule
         return $lookup;
     }
 
-    protected function assignTransitDelaysToDeliveryOptions(array $delayLookup) : void
+    protected function applyTransitDelaysToDeliveryOptions(array $params, array $delayLookup) : void
     {
-        $deliveryOptions = $this->getDeliveryOptionsSnapshot();
-        if (empty($deliveryOptions)) {
+        if (!isset($params['delivery_option_list']) || !is_array($params['delivery_option_list'])) {
             return;
         }
 
-        foreach ($deliveryOptions as $key => $option) {
-            if (!is_array($option)) {
+        $optionList = $params['delivery_option_list'];
+        $updated = false;
+        $languages = Language::getLanguages(false);
+        foreach ($optionList as $idAddress => $carrierListRaw) {
+            if (!is_array($carrierListRaw)) {
                 continue;
             }
-            $carrierId = isset($option['id']) ? (int)$option['id'] : 0;
-            $delayText = $this->resolveTransitDelayForCarrier($carrierId, $delayLookup);
-            if ($delayText === '') {
-                continue;
+            foreach ($carrierListRaw as $key => $carrierList) {
+                if (!isset($carrierList['carrier_list']) || !is_array($carrierList['carrier_list'])) {
+                    continue;
+                }
+                foreach ($carrierList['carrier_list'] as $idCarrier => $carrierData) {
+                    if (!isset($carrierData['instance']) || !$carrierData['instance'] instanceof Carrier) {
+                        continue;
+                    }
+                    $carrierInstance = $carrierData['instance'];
+                    $lookupKey = $this->resolveCarrierKey($carrierInstance->name);
+                    if ($lookupKey === '' || !isset($delayLookup[$lookupKey])) {
+                        continue;
+                    }
+                    $delayText = $delayLookup[$lookupKey];
+                    if ($delayText === '') {
+                        continue;
+                    }
+                    foreach ($languages as $lang) {
+                        $langId = (int)$lang['id_lang'];
+                        $carrierInstance->delay[$langId] = $delayText;
+                    }
+                    $optionList[$idAddress][$key]['carrier_list'][$idCarrier]['instance'] = $carrierInstance;
+                    $updated = true;
+                }
             }
-            $compositeKey = $carrierId > 0 ? $carrierId.',' : '';
-            if ($compositeKey !== '' && array_key_exists($compositeKey, $deliveryOptions)) {
-                $deliveryOptions[$compositeKey]['delay'] = $delayText;
-            } else {
-                $deliveryOptions[$key]['delay'] = $delayText;
-            }
         }
 
-        $existingDelays = $this->context->smarty->getTemplateVars('delay_times');
-        if (is_array($existingDelays)) {
-            $deliveryOptions = array_merge($existingDelays, $deliveryOptions);
+        if ($updated) {
+            $this->context->smarty->assign('delivery_option_list', $optionList);
         }
-
-        $this->context->smarty->assign('delay_times', $deliveryOptions);
-    }
-
-    protected function getDeliveryOptionsSnapshot() : array
-    {
-        if (!class_exists('\PrestaShop\PrestaShop\Adapter\Delivery\DeliveryOptionsFinder')) {
-            return [];
-        }
-        if (!class_exists('\PrestaShop\PrestaShop\Adapter\Product\PriceFormatter')) {
-            return [];
-        }
-
-        $objectPresenter = $this->buildObjectPresenterForTransitDelays();
-        if ($objectPresenter === null) {
-            return [];
-        }
-
-        $priceFormatter = new \PrestaShop\PrestaShop\Adapter\Product\PriceFormatter();
-
-        try {
-            $deliveryOptionsFinder = new \PrestaShop\PrestaShop\Adapter\Delivery\DeliveryOptionsFinder(
-                $this->context,
-                $this->getTranslator(),
-                $objectPresenter,
-                $priceFormatter
-            );
-        } catch (Exception $e) {
-            return [];
-        }
-
-        if (!method_exists($deliveryOptionsFinder, 'getDeliveryOptions')) {
-            return [];
-        }
-
-        $options = $deliveryOptionsFinder->getDeliveryOptions();
-
-        return is_array($options) ? $options : [];
-    }
-
-    protected function buildObjectPresenterForTransitDelays()
-    {
-        if (class_exists('\PrestaShop\PrestaShop\Adapter\ObjectPresenter')) {
-            return new \PrestaShop\PrestaShop\Adapter\ObjectPresenter();
-        }
-        if (class_exists('\PrestaShop\PrestaShop\Adapter\Presenter\Object\ObjectPresenter')) {
-            return new \PrestaShop\PrestaShop\Adapter\Presenter\Object\ObjectPresenter();
-        }
-
-        return null;
-    }
-
-    protected function resolveTransitDelayForCarrier(int $carrierId, array $delayLookup) : string
-    {
-        if ($carrierId <= 0) {
-            return '';
-        }
-        static $carrierCache = [];
-        if (!array_key_exists($carrierId, $carrierCache)) {
-            $carrierCache[$carrierId] = new Carrier($carrierId);
-        }
-        $carrier = $carrierCache[$carrierId];
-        if (!Validate::isLoadedObject($carrier)) {
-            return '';
-        }
-        $key = $this->resolveCarrierKey($carrier->name);
-        if ($key === '' || !isset($delayLookup[$key])) {
-            return '';
-        }
-
-        return $delayLookup[$key];
     }
 
     protected function applyPreparationLeadTime(int $transitDays, int $prepDays) : int
