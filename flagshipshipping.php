@@ -855,6 +855,7 @@ class FlagshipShipping extends CarrierModule
         ];
         $this->carrierServiceCodesCache[$cacheKey] = $data;
         Configuration::updateValue($this->buildCarrierCodesKey($carrier->id), json_encode($data));
+        $this->logRateMatch($carrier, $data, 'persist');
     }
 
     protected function buildCarrierCodesKey(int $carrierId) : string
@@ -900,12 +901,14 @@ class FlagshipShipping extends CarrierModule
 
         if ($this->namesMatch($carrier->name, $rateCopy['courier'])) {
             $this->rememberCarrierServiceCodesFromRate($carrier, $rateCopy);
+            $this->logRateMatch($carrier, $rateCopy, 'name');
             return true;
         }
 
         $carrierCodes = $this->getCarrierServiceCodes($carrier);
         if ($this->rateMatchesCarrierCodes($rateCopy, $carrierCodes)) {
             $this->rememberCarrierServiceCodesFromRate($carrier, $rateCopy);
+            $this->logRateMatch($carrier, $rateCopy, 'code');
             return true;
         }
 
@@ -2515,6 +2518,22 @@ class FlagshipShipping extends CarrierModule
         $this->rememberCarrierServiceCodes($carrier, $courierCode, $flagshipCode);
     }
 
+    protected function logRateMatch(Carrier $carrier, array $data, string $source) : void
+    {
+        $courier = isset($data['courier']) ? (string)$data['courier'] : '';
+        $courierCode = isset($data['courier_code']) ? (string)$data['courier_code'] : '';
+        $flagshipCode = isset($data['flagship_code']) ? (string)$data['flagship_code'] : '';
+        $this->logDebug(sprintf(
+            'Matched carrier #%d (%s) via %s: courier=%s, courier_code=%s, flagship_code=%s',
+            (int)$carrier->id,
+            $carrier->name,
+            $source,
+            $courier,
+            $courierCode,
+            $flagshipCode
+        ));
+    }
+
     protected function synchronizeCarrierServiceCodesFromAvailableServices($availableServices) : void
     {
         if (!is_iterable($availableServices)) {
@@ -3056,7 +3075,9 @@ class FlagshipShipping extends CarrierModule
 
     protected function getTrackingUrl($shipment) : string {
         $courier = Tools::strtolower($shipment['shipment']->service->courier_name);
-        $trackingNumber = $shipment['shipment']->tracking_number;
+        $trackingNumber = isset($shipment['shipment']->tracking_number) ?
+            (string)$shipment['shipment']->tracking_number :
+            '';
         $templates = $this->getTrackingUrlConfig();
 
         if (isset($templates[$courier])) {
