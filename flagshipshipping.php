@@ -2208,6 +2208,7 @@ class FlagshipShipping extends CarrierModule
             ),
             "postal_code" => $this->normalizePostalCode(Configuration::get('PS_SHOP_CODE'), $shopCountryId),
             "phone" => Configuration::get('PS_SHOP_PHONE'),
+            "email_address" => trim((string)Configuration::get('PS_SHOP_EMAIL')),
             "is_commercial" => true
         ];
     }
@@ -2221,6 +2222,10 @@ class FlagshipShipping extends CarrierModule
         $company = trim((string)$address->company);
         $name = $company !== '' ? $company : ($fullName !== '' ? $fullName : $this->l('Customer'));
         $attn = $fullName !== '' ? $fullName : $name;
+        $customerEmail = $customer instanceof Customer ? trim((string)$customer->email) : '';
+        if (!Validate::isEmail($customerEmail)) {
+            $customerEmail = trim((string)Configuration::get('PS_SHOP_EMAIL'));
+        }
 
         return [
             "name" => Tools::substr($name, 0, 29),
@@ -2232,6 +2237,7 @@ class FlagshipShipping extends CarrierModule
             "state" => $this->getStateCode((int)$address->id_state, (int)$address->id_country),
             "postal_code" => $this->normalizePostalCode($address->postcode, (int)$address->id_country),
             "phone" => $this->resolvePhoneNumber($address),
+            "email_address" => $customerEmail,
             "is_commercial" => Configuration::get('flagship_residential') ? false : true
         ];
     }
