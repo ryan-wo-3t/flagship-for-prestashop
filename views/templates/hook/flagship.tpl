@@ -22,12 +22,12 @@
 *  @license    https://opensource.org/licenses/MIT
 *
 *}
-<script type="text/javascript">
-	var orderId = "{$orderId|escape:'htmlall':'UTF-8'}";
-	var shipmentId = "{$shipmentFlag|escape:'htmlall':'UTF-8'}";
-	var convertActionLabel = "{$convertActionLabelText|escape:'javascript'}";
-	var viewShipmentActionLabel = "{$viewShipmentActionLabelText|escape:'javascript'}";
-</script>
+<div id="flagshipMeta"
+     data-order-id="{$orderId|escape:'htmlall':'UTF-8'}"
+     data-shipment-id="{$shipmentFlag|escape:'htmlall':'UTF-8'}"
+     data-convert-label="{$convertActionLabelText|escape:'javascript'}"
+     data-view-label="{$viewShipmentActionLabelText|escape:'javascript'}"
+     class="d-none"></div>
 
 <div id="flagshipSendActions" class="{if !$isNew}d-none{/if}">
 	<a href="#" class="btn btn-default send_to_flagship" id="send_to_flagship"><i class="icon-truck"></i>Send To FlagShip</a>
@@ -145,26 +145,41 @@
 <div class="response"><img src="{$base_url|escape:'htmlall':'UTF-8'}img/loader.gif" alt="Loading..." id="loading-image"/>
 </div>
 <script>
-
+(function($){
+	var meta = document.getElementById('flagshipMeta');
+	if (!meta || typeof $ === 'undefined') {
+		return;
+	}
+	var orderId = meta.dataset.orderId || '';
+	var shipmentId = meta.dataset.shipmentId || '';
+	var convertActionLabel = meta.dataset.convertLabel || '';
+	var viewShipmentActionLabel = meta.dataset.viewLabel || '';
 	var url = "{$module_dir|escape:'htmlall':'UTF-8'}shipping.php";
-	var action = 'prepare';
-	var msg = 'FlagShip Shipment: ';
+	var $loader = $('#loading-image');
+	var $response = $('.response');
+	var $sendBtns = $('.send_to_flagship');
+	var $shipmentIdRow = $('#flagshipShipmentIdRow');
+	var $shipmentIdValue = $('#flagshipShipmentIdValue');
+	var $shipmentIdPlain = $('#flagshipShipmentIdValuePlain');
+	var $shipmentCard = $('#flagshipShipmentCard');
+	var $actionsGroup = $('#flagshipActionsGroup');
+	var $sendActions = $('#flagshipSendActions');
+	var requestInFlight = false;
 
-	$(document).ajaxStart(function(){
-		$("#loading-image").show();
-	});
-	$(document).ajaxStop(function(){
-		$("#loading-image").hide();
-	});
+	function setLoading(active) {
+		requestInFlight = active;
+		$loader.toggle(active);
+		$sendBtns.prop('disabled', active);
+	}
 
-	function updateConvertButton(actionUrl, labelText){
+	function updateConvertButton(actionUrl, labelText) {
 		if (actionUrl) {
 			$('#convert_shipment').attr('href', actionUrl);
 			$('#flagshipShipmentLink').attr('href', actionUrl).removeClass('d-none');
-			$('#flagshipShipmentIdValuePlain').addClass('d-none');
+			$shipmentIdPlain.addClass('d-none');
 		} else {
 			$('#flagshipShipmentLink').addClass('d-none');
-			$('#flagshipShipmentIdValuePlain').removeClass('d-none');
+			$shipmentIdPlain.removeClass('d-none');
 		}
 		var text = labelText && labelText.length ? labelText : convertActionLabel;
 		if ((!labelText || !labelText.length) && actionUrl && /\/overview$/i.test(actionUrl)) {
@@ -173,56 +188,55 @@
 		$('#convert_shipment').text(text);
 	}
 
-	$(document).ready(function(){
-		$("#loading-image").hide();
-		$(".send_to_flagship").click(function(e){
-			if($(this).attr('id') == 'update_shipment'){
-				action = 'update';
+	$(function(){
+		if (!$sendBtns.length) {
+			return;
+		}
+		$loader.hide();
+		$sendBtns.on('click', function(event){
+			event.preventDefault();
+			if (requestInFlight) {
+				return;
 			}
-
-			e.preventDefault();
-
+			var currentAction = this.id === 'update_shipment' ? 'update' : 'prepare';
+			setLoading(true);
 			$.ajax({
-			  url : url,
-			  type : 'POST',
-			  dataType : 'json',
-			  data : {
-			  	order_id : orderId,
-			  	shipment_id : shipmentId,
-			  	action : action
-			  },
-			  success : function(response){
-			  	var payload = response;
-			  	if (typeof payload !== 'object' || payload === null) {
-			  		$(".response").html(response);
-			  		return 0;
-			  	}
-			  	if (payload.message) {
-			  		$(".response").html(payload.message);
-			  	}
-			  	if (payload.success && action === 'prepare') {
-			  		if (payload.shipment_id) {
-			  			shipmentId = payload.shipment_id;
-			  			$('#flagshipShipmentIdRow').removeClass('d-none');
-			  			$('#flagshipShipmentIdValue').text(payload.shipment_id);
-			  			$('#flagshipShipmentIdValuePlain').text(payload.shipment_id);
-			  		}
-			  		updateConvertButton(payload.convert_url || '', payload.action_label || '');
-			  		$('#flagshipShipmentCard').removeClass('d-none');
-			  		$('#flagshipActionsGroup').removeClass('d-none');
-			  		$('#flagshipSendActions').addClass('d-none');
-			  	}
-			  	return 0;
-			  },
-			  error : function(xhr){
-			  	var fallback = xhr.responseText ? xhr.responseText : '{l s='Unable to contact FlagShip. Please try again.' mod='flagshipshipping'}';
-			  	$(".response").html(fallback);
-			  },
-			  complete : function(){
-			  	action = 'prepare';
-			  }
+				url: url,
+				type: 'POST',
+				dataType: 'json',
+				data: {
+					order_id: orderId,
+					shipment_id: shipmentId,
+					action: currentAction
+				}
+			}).done(function(payload){
+				if (typeof payload !== 'object' || payload === null) {
+					$response.html(payload);
+					return;
+				}
+				if (payload.message) {
+					$response.html(payload.message);
+				}
+				if (payload.success && currentAction === 'prepare') {
+					if (payload.shipment_id) {
+						shipmentId = payload.shipment_id;
+						$shipmentIdRow.removeClass('d-none');
+						$shipmentIdValue.text(payload.shipment_id);
+						$shipmentIdPlain.text(payload.shipment_id);
+					}
+					updateConvertButton(payload.convert_url || '', payload.action_label || '');
+					$shipmentCard.removeClass('d-none');
+					$actionsGroup.removeClass('d-none');
+					$sendActions.addClass('d-none');
+				}
+			}).fail(function(xhr){
+				var fallback = xhr && xhr.responseText ? xhr.responseText : '{l s='Unable to contact FlagShip. Please try again.' mod='flagshipshipping'}';
+				$response.html(fallback);
+			}).always(function(){
+				setLoading(false);
 			});
 		});
 	});
+})(jQuery);
 </script>
 

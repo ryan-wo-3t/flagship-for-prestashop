@@ -61,6 +61,9 @@ class FlagshipShipping extends CarrierModule
     protected $orderBlockRendered = false;
     protected const TRACKING_PLACEHOLDER = '@';
     protected const CARRIER_CODES_KEY_PREFIX = 'FG_CARR_CODE_';
+    protected const RELEASE_CACHE_KEY = 'flagship_release_cache';
+    protected const RELEASE_CACHE_TTL = 43200; // 12 hours
+    protected const PRESERVE_BOXES_ON_UNINSTALL_KEY = 'flagship_preserve_boxes_on_uninstall';
     protected $carrierServiceCodesCache = [];
     protected $carrierServiceCodeSyncAttempted = false;
 
@@ -143,6 +146,7 @@ class FlagshipShipping extends CarrierModule
         Configuration::updateValue('flagship_filter_po_box', 0);
         Configuration::updateValue('flagship_tracking_email', 0);
         Configuration::updateValue('flagship_send_shop_tracking_email', 0);
+        Configuration::updateValue(self::PRESERVE_BOXES_ON_UNINSTALL_KEY, 0);
         foreach ($this->getTrackingUrlDefaults() as $carrier => $template) {
             Configuration::updateValue('flagship_tracking_url_'.$carrier, $template);
         }
@@ -153,6 +157,7 @@ class FlagshipShipping extends CarrierModule
 
     public function uninstall()
     {
+        $preserveBoxes = (bool)Configuration::get(self::PRESERVE_BOXES_ON_UNINSTALL_KEY);
 
         Configuration::deleteByName('flagship_api_token');
         Configuration::deleteByName('flagship_fee');
@@ -165,6 +170,7 @@ class FlagshipShipping extends CarrierModule
         Configuration::deleteByName('flagship_filter_po_box');
         Configuration::deleteByName('flagship_tracking_email');
         Configuration::deleteByName('flagship_send_shop_tracking_email');
+        Configuration::deleteByName(self::PRESERVE_BOXES_ON_UNINSTALL_KEY);
         foreach (array_keys($this->getTrackingUrlDefaults()) as $carrier) {
             Configuration::deleteByName('flagship_tracking_url_'.$carrier);
         }
@@ -178,7 +184,9 @@ class FlagshipShipping extends CarrierModule
         Db::getInstance()->execute('DROP TABLE `'._DB_PREFIX_.'flagship_shipping`');
     }
 
-        Db::getInstance()->execute('DROP TABLE `'._DB_PREFIX_.'flagship_boxes`');
+        if (!$preserveBoxes) {
+            Db::getInstance()->execute('DROP TABLE `'._DB_PREFIX_.'flagship_boxes`');
+        }
         $this->purgeCarrierServiceCodes();
         Db::getInstance()->execute('DELETE FROM `'._DB_PREFIX_.'carrier` WHERE external_module_name = "flagshipshipping"');
         $this->logDebug("Flagship for prestashop uninstalled");
@@ -187,27 +195,7 @@ class FlagshipShipping extends CarrierModule
 
     public function hookDisplayAdminAfterHeader(array $params)
     {
-        $curl = curl_init();
-
-        curl_setopt_array($curl, array(
-          CURLOPT_URL => "https://api.github.com/repos/flagshipcompany/flagship-for-prestashop/releases/latest",
-          CURLOPT_RETURNTRANSFER => true,
-          CURLOPT_ENCODING => "",
-          CURLOPT_MAXREDIRS => 10,
-          CURLOPT_TIMEOUT => 0,
-          CURLOPT_FOLLOWLOCATION => true,
-          CURLOPT_HTTP_VERSION => CURL_HTTP_VERSION_1_1,
-          CURLOPT_CUSTOMREQUEST => "GET",
-          CURLOPT_USERAGENT => " ",
-        ));
-
-        $rawResponse = curl_exec($curl);
-        curl_close($curl);
-
-        $response = json_decode($rawResponse, true);
-        if (!is_array($response)) {
-            $response = array();
-        }
+        $response = $this->getCachedReleaseInfo();
 
         $latestTag = array_key_exists('tag_name', $response) ? Tools::substr($response['tag_name'], 1) : '0';
         $latestTagNumber = strrchr($latestTag, ".");
@@ -248,6 +236,25 @@ class FlagshipShipping extends CarrierModule
         $this->applyTransitDelaysToDeliveryOptions($params, $delayLookup);
 
         return '';
+    }
+
+    protected function getCachedReleaseInfo() : array
+    {
+        $cache = $this->getReleaseCache();
+        if ($cache !== null && isset($cache['payload']) && is_array($cache['payload'])) {
+            $fetchedAt = isset($cache['fetched_at']) ? (int)$cache['fetched_at'] : 0;
+            if ($fetchedAt > 0 && (time() - $fetchedAt) < self::RELEASE_CACHE_TTL) {
+                return $cache['payload'];
+            }
+        }
+
+        $payload = $this->fetchLatestReleaseFromGithub();
+        if (!empty($payload)) {
+            $this->storeReleaseCache($payload);
+            return $payload;
+        }
+
+        return $cache['payload'] ?? array();
     }
 
     protected function getReleaseZipUrl(array $release) : string
@@ -363,18 +370,25 @@ class FlagshipShipping extends CarrierModule
         $this->url = Configuration::get('flagship_test_env') ? SMARTSHIP_TEST_WEB_URL : SMARTSHIP_WEB_URL;
         $order = new Order($id_order);
         $orderTrackingNumber = Validate::isLoadedObject($order) ? $this->getOrderTrackingNumber($order) : '';
-        $trackingShipment = !empty($orderTrackingNumber) ? $this->findFlagshipShipmentByTracking($orderTrackingNumber) : null;
-        $trackingIsFlagship = $trackingShipment instanceof FlagshipShipment;
-        $trackingShipmentLink = $trackingIsFlagship ? $this->getFlagshipShipmentDashboardUrl((int)$trackingShipment->shipment->id) : '';
-        $trackingCarrierLink = $trackingIsFlagship ? $this->getTrackingUrl(['shipment' => $trackingShipment->shipment]) : '';
-        $trackingCourierName = $trackingIsFlagship ? $trackingShipment->shipment->service->courier_name : '';
-        $trackingCourierDisplayName = $trackingCourierName ? $this->getCarrierDisplayName($trackingCourierName) : '';
-
         $shipmentId = $this->getShipmentId($id_order);
-        $shipmentFlag = is_null($shipmentId) ? 0 : $shipmentId;
-        $convertUrl = '';
         $isNewShipment = is_null($shipmentId);
+        $shipmentFlag = $isNewShipment ? 0 : $shipmentId;
+        $convertUrl = '';
+        $trackingShipment = null;
+        if (!empty($orderTrackingNumber) && $isNewShipment) {
+            $trackingShipment = $this->findFlagshipShipmentByTracking($orderTrackingNumber);
+        }
+
         $shipmentData = $isNewShipment ? [] : $this->getShipment($shipmentId);
+        if (empty($shipmentData) && $trackingShipment === null && !empty($orderTrackingNumber)) {
+            $trackingShipment = $this->findFlagshipShipmentByTracking($orderTrackingNumber);
+        }
+
+        $trackingIsFlagship = (!$isNewShipment && !empty($shipmentData)) || $trackingShipment instanceof FlagshipShipment;
+        $trackingShipmentLink = '';
+        $trackingCarrierLink = '';
+        $trackingCourierName = '';
+        $trackingCourierDisplayName = '';
         $isDeletedShipment = false;
         if (empty($shipmentData) && $trackingIsFlagship) {
             $shipmentData = ['shipment' => $trackingShipment->shipment];
@@ -399,6 +413,22 @@ class FlagshipShipping extends CarrierModule
         if ($shipmentFlag) {
             $convertUrl = $this->buildShipmentActionUrl($shipmentFlag, $shipmentData);
         }
+
+        if (!empty($shipmentData)) {
+            $shipmentDisplayId = isset($shipmentData['shipment']->id) ? (int)$shipmentData['shipment']->id : 0;
+            $trackingShipmentLink = $shipmentDisplayId ? $this->getFlagshipShipmentDashboardUrl($shipmentDisplayId) : '';
+            $trackingCarrierLink = $this->getTrackingUrl($shipmentData);
+            if (isset($shipmentData['shipment']->service->courier_name)) {
+                $trackingCourierName = (string)$shipmentData['shipment']->service->courier_name;
+                $trackingCourierDisplayName = $trackingCourierName ? $this->getCarrierDisplayName($trackingCourierName) : '';
+            }
+        } elseif ($trackingShipment instanceof FlagshipShipment) {
+            $trackingShipmentLink = $this->getFlagshipShipmentDashboardUrl((int)$trackingShipment->shipment->id);
+            $trackingCarrierLink = $this->getTrackingUrl(['shipment' => $trackingShipment->shipment]);
+            $trackingCourierName = $trackingShipment->shipment->service->courier_name;
+            $trackingCourierDisplayName = $trackingCourierName ? $this->getCarrierDisplayName($trackingCourierName) : '';
+        }
+
         $convertButtonLabel = $this->getShipmentActionLabel($convertUrl);
         $packedBoxes = [];
         $showBoxSizeToggle = (bool) Configuration::get('flagship_show_box_size');
@@ -1881,6 +1911,27 @@ class FlagshipShipping extends CarrierModule
                             'name' => 'name',
                         ]
                     ],
+                    [
+                        'col' => 4,
+                        'type' => 'select',
+                        'label' => $this->l('Preserve boxes on uninstall'),
+                        'desc' =>  $this->l('Keep the flagship_boxes table when uninstalling the module instead of dropping it.'),
+                        'name' => self::PRESERVE_BOXES_ON_UNINSTALL_KEY,
+                        'options' => [
+                            'query' => [
+                                [
+                                    'key' => 0,
+                                    'name' => 'No'
+                                ],
+                                [
+                                    'key' => 1,
+                                    'name' => 'Yes'
+                                ]
+                            ],
+                            'id' => 'key',
+                            'name' => 'name',
+                        ]
+                    ],
                 ],
                 'submit' => [
                     'title' => $this->l('Save'),
@@ -1977,6 +2028,7 @@ class FlagshipShipping extends CarrierModule
             'flagship_preparation_days' => Configuration::get('flagship_preparation_days'),
             'flagship_debug_logging' => Configuration::get('flagship_debug_logging'),
             'flagship_filter_po_box' => Configuration::get('flagship_filter_po_box'),
+            self::PRESERVE_BOXES_ON_UNINSTALL_KEY => Configuration::get(self::PRESERVE_BOXES_ON_UNINSTALL_KEY),
         ];
     }
 
@@ -2027,6 +2079,8 @@ class FlagshipShipping extends CarrierModule
         $debugLogging = $debugLogging === '' ? (int)Configuration::get('flagship_debug_logging') : (int)$debugLogging;
         $filterPoBox = Tools::getValue('flagship_filter_po_box', Configuration::get('flagship_filter_po_box'));
         $filterPoBox = $filterPoBox === '' ? (int)Configuration::get('flagship_filter_po_box') : (int)$filterPoBox;
+        $preserveBoxes = Tools::getValue(self::PRESERVE_BOXES_ON_UNINSTALL_KEY, Configuration::get(self::PRESERVE_BOXES_ON_UNINSTALL_KEY));
+        $preserveBoxes = $preserveBoxes === '' ? (int)Configuration::get(self::PRESERVE_BOXES_ON_UNINSTALL_KEY) : (int)$preserveBoxes;
 
         if (is_string(Configuration::get('flagship_fee')) && is_string(Configuration::get('flagship_api_token')) && is_string(Configuration::get('flagship_markup')) ) { //fields exist in db
             $feeFlag = $fee != Configuration::get('flagship_fee') ?
@@ -2055,7 +2109,9 @@ class FlagshipShipping extends CarrierModule
                                 Configuration::updateValue('flagship_debug_logging', $debugLogging) : 0;
             $filterPoBoxFlag = $filterPoBox != Configuration::get('flagship_filter_po_box') ?
                                 Configuration::updateValue('flagship_filter_po_box', $filterPoBox) : 0;
-            return $this->displayConfirmation($this->getReturnMessage($apiToken, $testEnv, $feeFlag, $markupFlag, $residentialFlag, $emailOnLabelFlag, $trackingEmailFlag, $shopTrackingFlag, $packingFlag, $showBoxSizeFlag, $showPackingLayersFlag, $prepDaysFlag, $debugLoggingFlag, $filterPoBoxFlag));
+            $preserveBoxesFlag = $preserveBoxes != Configuration::get(self::PRESERVE_BOXES_ON_UNINSTALL_KEY) ?
+                                Configuration::updateValue(self::PRESERVE_BOXES_ON_UNINSTALL_KEY, $preserveBoxes) : 0;
+            return $this->displayConfirmation($this->getReturnMessage($apiToken, $testEnv, $feeFlag, $markupFlag, $residentialFlag, $emailOnLabelFlag, $trackingEmailFlag, $shopTrackingFlag, $packingFlag, $showBoxSizeFlag, $showPackingLayersFlag, $prepDaysFlag, $debugLoggingFlag, $filterPoBoxFlag, $preserveBoxesFlag));
 
         }
 
@@ -2070,6 +2126,7 @@ class FlagshipShipping extends CarrierModule
             Configuration::updateValue('flagship_filter_po_box', $filterPoBox);
             Configuration::updateValue('flagship_tracking_email', $trackingEmail);
             Configuration::updateValue('flagship_send_shop_tracking_email', $sendShopTracking);
+            Configuration::updateValue(self::PRESERVE_BOXES_ON_UNINSTALL_KEY, $preserveBoxes);
 
             Configuration::updateValue('flagship_preparation_days', $prepDays);
             return $this->displayConfirmation($this->l('FlagShip Configured'));
@@ -2077,7 +2134,7 @@ class FlagshipShipping extends CarrierModule
         return $this->displayWarning($this->l("Oops! Token is invalid or same token is set."));
     }
 
-    protected function getReturnMessage(string $apiToken, int $testEnv, int $feeFlag, int $markupFlag, int $residentialFlag, int $emailOnLabelFlag, int $trackingEmailFlag, int $shopTrackingFlag, int $packingFlag, int $showBoxSizeFlag, int $showPackingLayersFlag, int $prepDaysFlag, int $debugLoggingFlag, int $filterPoBoxFlag) : string
+    protected function getReturnMessage(string $apiToken, int $testEnv, int $feeFlag, int $markupFlag, int $residentialFlag, int $emailOnLabelFlag, int $trackingEmailFlag, int $shopTrackingFlag, int $packingFlag, int $showBoxSizeFlag, int $showPackingLayersFlag, int $prepDaysFlag, int $debugLoggingFlag, int $filterPoBoxFlag, int $preserveBoxesFlag) : string
     {
         $returnMessage = "<b>";
         $validToken = 0;
@@ -2094,7 +2151,7 @@ class FlagshipShipping extends CarrierModule
             $returnMessage .= "Token not updated! ";
         }
 
-        if($feeFlag || $markupFlag || $residentialFlag || $emailOnLabelFlag || $trackingEmailFlag || $shopTrackingFlag || $packingFlag || $showBoxSizeFlag || $showPackingLayersFlag || $prepDaysFlag || $debugLoggingFlag || $filterPoBoxFlag){
+        if($feeFlag || $markupFlag || $residentialFlag || $emailOnLabelFlag || $trackingEmailFlag || $shopTrackingFlag || $packingFlag || $showBoxSizeFlag || $showPackingLayersFlag || $prepDaysFlag || $debugLoggingFlag || $filterPoBoxFlag || $preserveBoxesFlag){
             $returnMessage .= "Settings Updated";
         }
 
@@ -2522,6 +2579,63 @@ class FlagshipShipping extends CarrierModule
         $courierCode = Tools::strtolower(trim((string)$service->getCode()));
         $flagshipCode = Tools::strtolower(trim((string)$service->getFlagshipCode()));
         $this->rememberCarrierServiceCodes($carrier, $courierCode, $flagshipCode);
+    }
+
+    protected function fetchLatestReleaseFromGithub() : array
+    {
+        $curl = curl_init();
+        $options = array(
+          CURLOPT_URL => "https://api.github.com/repos/flagshipcompany/flagship-for-prestashop/releases/latest",
+          CURLOPT_RETURNTRANSFER => true,
+          CURLOPT_ENCODING => "",
+          CURLOPT_MAXREDIRS => 10,
+          CURLOPT_TIMEOUT => 5,
+          CURLOPT_FOLLOWLOCATION => true,
+          CURLOPT_HTTP_VERSION => CURL_HTTP_VERSION_1_1,
+          CURLOPT_CUSTOMREQUEST => "GET",
+          CURLOPT_USERAGENT => " ",
+        );
+        curl_setopt_array($curl, $options);
+
+        $rawResponse = curl_exec($curl);
+        $curlError = $rawResponse === false ? curl_error($curl) : '';
+        curl_close($curl);
+
+        if ($rawResponse === false) {
+            $this->logDebug('FlagShip release check failed: '.$curlError);
+            return array();
+        }
+
+        $response = json_decode($rawResponse, true);
+        if (!is_array($response)) {
+            return array();
+        }
+
+        return $response;
+    }
+
+    protected function getReleaseCache() : ?array
+    {
+        $raw = Configuration::get(self::RELEASE_CACHE_KEY);
+        if ($raw === false || $raw === '') {
+            return null;
+        }
+
+        $decoded = json_decode($raw, true);
+        if (!is_array($decoded)) {
+            return null;
+        }
+
+        return $decoded;
+    }
+
+    protected function storeReleaseCache(array $payload) : void
+    {
+        $data = array(
+            'payload' => $payload,
+            'fetched_at' => time(),
+        );
+        Configuration::updateValue(self::RELEASE_CACHE_KEY, json_encode($data));
     }
 
     protected function logRateMatch(Carrier $carrier, array $data, string $source) : void
