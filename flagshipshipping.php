@@ -909,13 +909,18 @@ class FlagshipShipping extends CarrierModule
         $rateCourierCode = isset($rate['courier_code']) ? $rate['courier_code'] : '';
         $rateFlagshipCode = isset($rate['flagship_code']) ? $rate['flagship_code'] : '';
 
-        if ($carrierCodes['courier_code'] !== '' && $rateCourierCode !== '' &&
-            $carrierCodes['courier_code'] === $rateCourierCode) {
-            return true;
-        }
+        $hasStoredCodes = $carrierCodes['courier_code'] !== '' || $carrierCodes['flagship_code'] !== '';
+        $hasRateCodes = $rateCourierCode !== '' || $rateFlagshipCode !== '';
 
-        if ($carrierCodes['flagship_code'] !== '' && $rateFlagshipCode !== '' &&
-            $carrierCodes['flagship_code'] === $rateFlagshipCode) {
+        if ($hasStoredCodes && $hasRateCodes) {
+            if ($carrierCodes['courier_code'] !== '' && $rateCourierCode !== '' &&
+                $carrierCodes['courier_code'] !== $rateCourierCode) {
+                return false;
+            }
+            if ($carrierCodes['flagship_code'] !== '' && $rateFlagshipCode !== '' &&
+                $carrierCodes['flagship_code'] !== $rateFlagshipCode) {
+                return false;
+            }
             return true;
         }
 
@@ -928,17 +933,22 @@ class FlagshipShipping extends CarrierModule
         if (!$this->sanitizeRateEntry($rateCopy)) {
             return false;
         }
+        $carrierCodes = $this->getCarrierServiceCodes($carrier);
+        $rateHasCodes = $rateCopy['courier_code'] !== '' || $rateCopy['flagship_code'] !== '';
+        $carrierHasCodes = $carrierCodes['courier_code'] !== '' || $carrierCodes['flagship_code'] !== '';
+
+        if ($rateHasCodes || $carrierHasCodes) {
+            if ($this->rateMatchesCarrierCodes($rateCopy, $carrierCodes)) {
+                $this->rememberCarrierServiceCodesFromRate($carrier, $rateCopy);
+                $this->logRateMatch($carrier, $rateCopy, 'code');
+                return true;
+            }
+            return false;
+        }
 
         if ($this->namesMatch($carrier->name, $rateCopy['courier'])) {
             $this->rememberCarrierServiceCodesFromRate($carrier, $rateCopy);
             $this->logRateMatch($carrier, $rateCopy, 'name');
-            return true;
-        }
-
-        $carrierCodes = $this->getCarrierServiceCodes($carrier);
-        if ($this->rateMatchesCarrierCodes($rateCopy, $carrierCodes)) {
-            $this->rememberCarrierServiceCodesFromRate($carrier, $rateCopy);
-            $this->logRateMatch($carrier, $rateCopy, 'code');
             return true;
         }
 
